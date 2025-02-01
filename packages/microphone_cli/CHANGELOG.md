@@ -11,4 +11,7 @@
 - Pure-Dart WAV writer (`wavFromPcm`); captured audio is S16LE PCM.
 - `SilentBackend` fallback that captures silence, so the API and tests run
   without a microphone. Web-safe via conditional imports.
-- Native FFI and web capture backends follow.
+- FFI backend that captures via the native `microphone` Rust library; macOS
+  capture over CoreAudio (AudioQueue input). Polls the native side and drains
+  S16LE PCM into the `frames` stream and an accumulating buffer.
+- Web capture backend follows.
