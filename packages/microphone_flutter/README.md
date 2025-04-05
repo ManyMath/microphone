@@ -19,12 +19,27 @@ if (await Microphone.requestPermission()) {
 }
 ```
 
+## Permissions
+
+The microphone is a protected resource; declare it in your app:
+
+- **macOS / iOS**: add `NSMicrophoneUsageDescription` to `Info.plist`. On macOS
+  also enable the audio-input entitlement
+  (`com.apple.security.device.audio-input`) for sandboxed apps.
+- **Android**: add `<uses-permission android:name="android.permission.RECORD_AUDIO"/>`
+  to `AndroidManifest.xml`.
+
+The OS prompts on first capture; the web backend prompts via getUserMedia. See
+the example app for working configuration.
+
+## Precompiled binaries
+
 Building requires Rust (`rustup`). To remove even that for consumers, the repo
 is set up for cargokit **precompiled binaries**:
 
 - `native/microphone/cargokit.yaml` holds the public signing key and the
   release URL prefix.
-- `.github/workflows/precompile.yml` builds and uploads signed binaries to
+- A release workflow builds and uploads signed binaries to
   `precompiled_<crate-hash>` releases on tag pushes. It needs a
   `CARGOKIT_PRIVATE_KEY` repository secret: the hex private key printed by
   `dart run build_tool gen-key` (keep it secret; never commit it).
