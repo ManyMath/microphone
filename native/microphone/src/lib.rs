@@ -14,6 +14,9 @@
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 mod coreaudio;
 
+#[cfg(target_os = "ios")]
+mod ios_session;
+
 /// A platform audio input that yields interleaved S16LE frames on demand.
 pub(crate) trait PcmSource: Send + Sync {
     /// Drains and returns up to `max` of the samples captured since the last
@@ -74,6 +77,9 @@ impl Recorder {
 
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     fn open_source(&self, channels: u32, rate: u32) -> Result<Box<dyn PcmSource>, String> {
+        // iOS gates audio input behind an active AVAudioSession; macOS does not.
+        #[cfg(target_os = "ios")]
+        ios_session::activate()?;
         let cap = coreaudio::CoreAudioCapture::open(&self.coreaudio, channels, rate)?;
         Ok(Box::new(cap))
     }

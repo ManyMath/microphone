@@ -41,7 +41,15 @@ class _RecorderPageState extends State<RecorderPage> {
   void initState() {
     super.initState();
     MicrophoneFlutter.ensureInitialized().then((name) {
+      debugPrint('microphone_cli backend: $name');
       if (mounted) setState(() => _backend = name);
+      // Headless self-test: when MIC_SELFTEST is set, record ~1s and log the
+      // captured byte count, so emulator/simulator runs can be checked from
+      // logs without driving the UI.
+      if (const bool.fromEnvironment('MIC_SELFTEST') ||
+          const String.fromEnvironment('MIC_SELFTEST').isNotEmpty) {
+        _selfTest();
+      }
     });
   }
 
@@ -50,6 +58,25 @@ class _RecorderPageState extends State<RecorderPage> {
     _frames?.cancel();
     _recording?.dispose();
     super.dispose();
+  }
+
+  /// Records ~1s and logs the result. Used for non-interactive verification on
+  /// simulators/emulators via `--dart-define=MIC_SELFTEST=1`.
+  Future<void> _selfTest() async {
+    try {
+      await Microphone.requestPermission();
+      final recording = await Microphone.record();
+      debugPrint('mic selftest: recording on ${recording.format}');
+      await Future<void>.delayed(const Duration(seconds: 1));
+      final wav = await recording.stop();
+      await recording.dispose();
+      debugPrint(
+        'mic selftest: captured ${wav.length} bytes, '
+        '${recording.duration.inMilliseconds} ms',
+      );
+    } on Object catch (e) {
+      debugPrint('mic selftest failed: $e');
+    }
   }
 
   Future<void> _start() async {
