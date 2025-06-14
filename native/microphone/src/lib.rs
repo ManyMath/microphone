@@ -17,6 +17,9 @@ mod coreaudio;
 #[cfg(target_os = "ios")]
 mod ios_session;
 
+#[cfg(target_os = "android")]
+mod aaudio;
+
 /// A platform audio input that yields interleaved S16LE frames on demand.
 pub(crate) trait PcmSource: Send + Sync {
     /// Drains and returns up to `max` of the samples captured since the last
@@ -63,6 +66,8 @@ pub struct Recorder {
     next_id: AtomicU64,
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     coreaudio: Arc<coreaudio::CoreAudio>,
+    #[cfg(target_os = "android")]
+    aaudio: Arc<aaudio::Aaudio>,
 }
 
 impl Recorder {
@@ -72,6 +77,8 @@ impl Recorder {
             next_id: AtomicU64::new(1),
             #[cfg(any(target_os = "macos", target_os = "ios"))]
             coreaudio: Arc::new(coreaudio::CoreAudio::load()?),
+            #[cfg(target_os = "android")]
+            aaudio: Arc::new(aaudio::Aaudio::load()?),
         })
     }
 
@@ -84,7 +91,13 @@ impl Recorder {
         Ok(Box::new(cap))
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    #[cfg(target_os = "android")]
+    fn open_source(&self, channels: u32, rate: u32) -> Result<Box<dyn PcmSource>, String> {
+        let cap = aaudio::AaudioCapture::open(&self.aaudio, channels, rate)?;
+        Ok(Box::new(cap))
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
     fn open_source(&self, _channels: u32, _rate: u32) -> Result<Box<dyn PcmSource>, String> {
         Err("native capture is not implemented on this platform yet".into())
     }
