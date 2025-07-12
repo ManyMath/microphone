@@ -10,6 +10,7 @@ export 'src/backends/silent_backend.dart';
 export 'src/capture_backend.dart';
 export 'src/capture_format.dart';
 export 'src/exceptions.dart';
+export 'src/level.dart';
 export 'src/microphone.dart';
 export 'src/recording.dart';
 export 'src/wav.dart';

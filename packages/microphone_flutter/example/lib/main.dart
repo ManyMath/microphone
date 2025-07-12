@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -33,7 +32,7 @@ class _RecorderPageState extends State<RecorderPage> {
   String _backend = '...';
   String _status = 'idle';
   Recording? _recording;
-  StreamSubscription<Uint8List>? _frames;
+  StreamSubscription<AudioLevel>? _levels;
   double _level = 0; // 0..1 live RMS level
   Uint8List? _lastWav;
 
@@ -55,7 +54,7 @@ class _RecorderPageState extends State<RecorderPage> {
 
   @override
   void dispose() {
-    _frames?.cancel();
+    _levels?.cancel();
     _recording?.dispose();
     super.dispose();
   }
@@ -86,7 +85,9 @@ class _RecorderPageState extends State<RecorderPage> {
     }
     try {
       final recording = await Microphone.record();
-      _frames = recording.frames.listen(_onFrame);
+      _levels = recording.levels().listen((level) {
+        if (mounted) setState(() => _level = level.rms);
+      });
       setState(() {
         _recording = recording;
         _lastWav = null;
@@ -100,8 +101,8 @@ class _RecorderPageState extends State<RecorderPage> {
   Future<void> _stop() async {
     final recording = _recording;
     if (recording == null) return;
-    await _frames?.cancel();
-    _frames = null;
+    await _levels?.cancel();
+    _levels = null;
     final wav = await recording.stop();
     await recording.dispose();
     setState(() {
@@ -111,19 +112,6 @@ class _RecorderPageState extends State<RecorderPage> {
       _status =
           'recorded ${recording.duration.inMilliseconds} ms, ${wav.length} bytes';
     });
-  }
-
-  /// Computes a live RMS level (0..1) from a chunk of S16LE PCM.
-  void _onFrame(Uint8List chunk) {
-    final samples = Int16List.sublistView(chunk);
-    if (samples.isEmpty) return;
-    var sumSquares = 0.0;
-    for (final s in samples) {
-      final n = s / 32768.0;
-      sumSquares += n * n;
-    }
-    final rms = sqrt(sumSquares / samples.length);
-    if (mounted) setState(() => _level = rms.clamp(0, 1));
   }
 
   @override
