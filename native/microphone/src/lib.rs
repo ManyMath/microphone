@@ -34,13 +34,14 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::os::raw::{c_char, c_int};
-use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
 // Recording state codes, mirrored by the Dart side.
 const STATE_RECORDING: u8 = 0;
 const STATE_STOPPED: u8 = 1;
 const STATE_ERROR: u8 = 2;
+const STATE_PAUSED: u8 = 3;
 
 thread_local! {
     static LAST_ERROR: RefCell<CString> = RefCell::new(CString::default());
@@ -55,6 +56,9 @@ fn set_last_error(msg: impl Into<String>) {
 struct Recording {
     source: Box<dyn PcmSource>,
     state: AtomicU8,
+    // When set, microphone_read discards captured input instead of returning
+    // it, so the paused interval is dropped from the recording.
+    paused: AtomicBool,
     rate: u32,
     channels: u32,
     error: Mutex<Option<String>>,
@@ -109,6 +113,7 @@ impl Recorder {
         let recording = Arc::new(Recording {
             source,
             state: AtomicU8::new(STATE_RECORDING),
+            paused: AtomicBool::new(false),
             rate,
             channels: actual_channels,
             error: Mutex::new(None),
@@ -204,6 +209,12 @@ pub unsafe extern "C" fn microphone_read(
     if out.is_null() || cap == 0 {
         return 0;
     }
+    // While paused, drain and discard captured input so the paused interval is
+    // dropped from the recording, and report that nothing was read.
+    if recording.paused.load(Ordering::SeqCst) {
+        let _ = recording.source.read(usize::MAX);
+        return 0;
+    }
     match recording.source.read(cap) {
         Ok(samples) => {
             let n = samples.len(); // read() already capped to `cap`
@@ -254,6 +265,42 @@ pub extern "C" fn microphone_channels(recorder: *mut Recorder, id: u64) -> c_int
     };
     match recorder.get(id) {
         Some(r) => r.channels as c_int,
+        None => -1,
+    }
+}
+
+/// Pauses a recording: captured input is discarded until resumed, so the paused
+/// interval is dropped. Returns 0 on success, -1 if the id is unknown.
+#[no_mangle]
+pub extern "C" fn microphone_pause(recorder: *mut Recorder, id: u64) -> c_int {
+    let Some(recorder) = with_recorder(recorder) else {
+        return -1;
+    };
+    match recorder.get(id) {
+        Some(r) => {
+            r.paused.store(true, Ordering::SeqCst);
+            r.state.store(STATE_PAUSED, Ordering::SeqCst);
+            0
+        }
+        None => -1,
+    }
+}
+
+/// Resumes a paused recording. Returns 0 on success, -1 if the id is unknown.
+#[no_mangle]
+pub extern "C" fn microphone_resume(recorder: *mut Recorder, id: u64) -> c_int {
+    let Some(recorder) = with_recorder(recorder) else {
+        return -1;
+    };
+    match recorder.get(id) {
+        Some(r) => {
+            // Discard whatever accumulated during the pause before resuming, so
+            // no paused audio leaks into the next read.
+            let _ = r.source.read(usize::MAX);
+            r.paused.store(false, Ordering::SeqCst);
+            r.state.store(STATE_RECORDING, Ordering::SeqCst);
+            0
+        }
         None => -1,
     }
 }

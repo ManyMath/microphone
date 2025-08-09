@@ -98,6 +98,17 @@ class _RecorderPageState extends State<RecorderPage> {
     }
   }
 
+  Future<void> _togglePause() async {
+    final recording = _recording;
+    if (recording == null) return;
+    if (recording.state == RecordingState.paused) {
+      await recording.resume();
+    } else {
+      await recording.pause();
+    }
+    setState(() => _status = recording.state.name);
+  }
+
   Future<void> _stop() async {
     final recording = _recording;
     if (recording == null) return;
@@ -117,6 +128,7 @@ class _RecorderPageState extends State<RecorderPage> {
   @override
   Widget build(BuildContext context) {
     final recording = _recording != null;
+    final paused = _recording?.state == RecordingState.paused;
     return Scaffold(
       appBar: AppBar(title: const Text('microphone_cli')),
       body: Padding(
@@ -138,6 +150,11 @@ class _RecorderPageState extends State<RecorderPage> {
                   onPressed: recording ? null : _start,
                   icon: const Icon(Icons.mic),
                   label: const Text('Record'),
+                ),
+                FilledButton.icon(
+                  onPressed: recording ? _togglePause : null,
+                  icon: Icon(paused ? Icons.play_arrow : Icons.pause),
+                  label: Text(paused ? 'Resume' : 'Pause'),
                 ),
                 FilledButton.icon(
                   onPressed: recording ? _stop : null,

@@ -50,8 +50,11 @@ abstract class Recording {
   /// The total audio captured so far, in time. Excludes paused gaps.
   Duration get duration;
 
-  /// Pauses capture, keeping what was captured. Safe to call when not
-  /// recording.
+  /// Pauses capture, keeping what was already captured.
+  ///
+  /// Audio arriving while paused is dropped, so the recording has no silent gap
+  /// for the paused interval -- [resume] continues right where [pause] left off.
+  /// Safe to call when not recording.
   Future<void> pause();
 
   /// Resumes a paused capture. Safe to call when not paused.

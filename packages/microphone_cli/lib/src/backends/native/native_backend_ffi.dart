@@ -118,6 +118,10 @@ class _Bindings {
       channels = lib.lookupFunction<_IdQueryNative, _IdQuery>(
         'microphone_channels',
       ),
+      pause = lib.lookupFunction<_IdQueryNative, _IdQuery>('microphone_pause'),
+      resume = lib.lookupFunction<_IdQueryNative, _IdQuery>(
+        'microphone_resume',
+      ),
       stop = lib.lookupFunction<_IdQueryNative, _IdQuery>('microphone_stop'),
       recordingFree = lib.lookupFunction<_IdQueryNative, _IdQuery>(
         'microphone_recording_free',
@@ -133,6 +137,8 @@ class _Bindings {
   final _IdQuery state;
   final _IdQuery sampleRate;
   final _IdQuery channels;
+  final _IdQuery pause;
+  final _IdQuery resume;
   final _IdQuery stop;
   final _IdQuery recordingFree;
   final _LastError lastError;
@@ -308,20 +314,19 @@ class FfiRecording implements Recording {
 
   @override
   Future<void> pause() async {
-    // Native capture keeps running; we just stop draining so the stream and
-    // accumulator do not grow. read() still buffers on the native side, which
-    // resume() will pick up. Good enough until native pause lands.
-    if (_state == RecordingState.recording) {
-      _stopPolling();
+    // The native side discards captured input while paused, so the paused
+    // interval is dropped. The poll keeps running but reads nothing.
+    if (_state == RecordingState.recording && _id != 0) {
+      _b.pause(_recorder, _id);
       _state = RecordingState.paused;
     }
   }
 
   @override
   Future<void> resume() async {
-    if (_state == RecordingState.paused) {
+    if (_state == RecordingState.paused && _id != 0) {
+      _b.resume(_recorder, _id);
       _state = RecordingState.recording;
-      _poll = Timer.periodic(const Duration(milliseconds: 50), (_) => _drain());
     }
   }
 

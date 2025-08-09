@@ -67,6 +67,27 @@ void main() {
         await recording.dispose();
       });
 
+      test('pause drops audio, resume continues', () async {
+        Microphone.registerBackend(FfiBackend(), makeActive: true);
+        final recording = await Microphone.record();
+        // Capture a bit, then pause.
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        await recording.pause();
+        expect(recording.state, RecordingState.paused);
+        // Let time pass while paused; the native side discards input, so the
+        // accumulated PCM must not grow (allow one in-flight poll's slack).
+        final atPause = recording.pcm.length;
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+        expect(recording.pcm.length - atPause, lessThan(8192));
+        // Resume and confirm capture grows again.
+        await recording.resume();
+        expect(recording.isRecording, isTrue);
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        expect(recording.pcm.length, greaterThan(atPause));
+        await recording.stop();
+        await recording.dispose();
+      });
+
       test('dispose is idempotent and stop-after-dispose is safe', () async {
         Microphone.registerBackend(FfiBackend(), makeActive: true);
         final recording = await Microphone.record();
