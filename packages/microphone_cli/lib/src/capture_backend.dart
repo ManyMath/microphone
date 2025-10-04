@@ -1,3 +1,4 @@
+import 'capture_device.dart';
 import 'capture_format.dart';
 import 'recording.dart';
 
@@ -41,11 +42,19 @@ abstract class CaptureBackend {
   /// this only to prompt ahead of time.
   Future<bool> requestPermission();
 
+  /// Lists the available input devices.
+  ///
+  /// The first call may require permission to return device labels (browsers
+  /// hide them until access is granted). Returns an empty list if enumeration
+  /// is unsupported; the default device is still used by [startRecording].
+  Future<List<CaptureDevice>> devices();
+
   /// Starts capturing in [format] and returns a controllable [Recording].
   ///
-  /// Throws [PermissionDeniedException] if access is refused and
+  /// [deviceId] selects an input from [devices]; when null the system default
+  /// is used. Throws [PermissionDeniedException] if access is refused and
   /// [CaptureException] on a capture failure.
-  Future<Recording> startRecording({CaptureFormat format});
+  Future<Recording> startRecording({CaptureFormat format, String? deviceId});
 
   /// Releases any global resources held by the backend.
   Future<void> dispose();

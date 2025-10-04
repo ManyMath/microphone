@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 
 import '../../capture_backend.dart';
+import '../../capture_device.dart';
 import '../../capture_format.dart';
 import '../../exceptions.dart';
 import '../../file_writer.dart';
@@ -20,8 +21,9 @@ CaptureBackend? createNativeBackend() => FfiBackend();
 typedef _RecorderNewNative = Pointer<Void> Function();
 typedef _RecorderFreeNative = Void Function(Pointer<Void>);
 typedef _RecorderFree = void Function(Pointer<Void>);
-typedef _StartNative = Uint64 Function(Pointer<Void>, Uint32, Uint32);
-typedef _Start = int Function(Pointer<Void>, int, int);
+typedef _StartNative =
+    Uint64 Function(Pointer<Void>, Uint32, Uint32, Pointer<Utf8>);
+typedef _Start = int Function(Pointer<Void>, int, int, Pointer<Utf8>);
 typedef _ReadNative =
     IntPtr Function(Pointer<Void>, Uint64, Pointer<Int16>, Size);
 typedef _Read = int Function(Pointer<Void>, int, Pointer<Int16>, int);
@@ -29,6 +31,12 @@ typedef _IdQueryNative = Int32 Function(Pointer<Void>, Uint64);
 typedef _IdQuery = int Function(Pointer<Void>, int);
 typedef _LastErrorNative = Pointer<Utf8> Function();
 typedef _LastError = Pointer<Utf8> Function();
+typedef _DeviceCountNative = Int32 Function();
+typedef _DeviceCount = int Function();
+typedef _DeviceFieldNative = Int32 Function(Int32, Pointer<Utf8>, Size);
+typedef _DeviceField = int Function(int, Pointer<Utf8>, int);
+typedef _DeviceIsDefaultNative = Int32 Function(Int32);
+typedef _DeviceIsDefault = int Function(int);
 
 // Recording state codes mirrored from the native side. Only the error code is
 // acted on here (0 recording / 1 stopped are inferred from our own lifecycle).
@@ -128,7 +136,20 @@ class _Bindings {
       ),
       lastError = lib.lookupFunction<_LastErrorNative, _LastError>(
         'microphone_last_error',
-      );
+      ),
+      deviceCount = lib.lookupFunction<_DeviceCountNative, _DeviceCount>(
+        'microphone_device_count',
+      ),
+      deviceId = lib.lookupFunction<_DeviceFieldNative, _DeviceField>(
+        'microphone_device_id',
+      ),
+      deviceName = lib.lookupFunction<_DeviceFieldNative, _DeviceField>(
+        'microphone_device_name',
+      ),
+      deviceIsDefault = lib
+          .lookupFunction<_DeviceIsDefaultNative, _DeviceIsDefault>(
+            'microphone_device_is_default',
+          );
 
   final Pointer<Void> Function() recorderNew;
   final _RecorderFree recorderFree;
@@ -142,6 +163,10 @@ class _Bindings {
   final _IdQuery stop;
   final _IdQuery recordingFree;
   final _LastError lastError;
+  final _DeviceCount deviceCount;
+  final _DeviceField deviceId;
+  final _DeviceField deviceName;
+  final _DeviceIsDefault deviceIsDefault;
 }
 
 /// Captures audio by calling the native `microphone` library over FFI.
@@ -202,11 +227,42 @@ class FfiBackend extends CaptureBackend {
   Future<bool> requestPermission() async => true;
 
   @override
+  Future<List<CaptureDevice>> devices() async {
+    if (!isAvailable) return const [];
+    final b = _bindings!;
+    final count = b.deviceCount();
+    if (count <= 0) return const [];
+    const cap = 512;
+    final buf = malloc<Uint8>(cap).cast<Utf8>();
+    try {
+      final out = <CaptureDevice>[];
+      for (var i = 0; i < count; i++) {
+        final idLen = b.deviceId(i, buf, cap);
+        if (idLen < 0) continue;
+        final id = buf.toDartString(length: idLen);
+        final nameLen = b.deviceName(i, buf, cap);
+        final name = nameLen < 0 ? id : buf.toDartString(length: nameLen);
+        out.add(
+          CaptureDevice(
+            id: id,
+            label: name,
+            isDefault: b.deviceIsDefault(i) == 1,
+          ),
+        );
+      }
+      return out;
+    } finally {
+      malloc.free(buf);
+    }
+  }
+
+  @override
   Future<Recording> startRecording({
     CaptureFormat format = const CaptureFormat(),
+    String? deviceId,
   }) async {
     if (_recorder == nullptr) await initialize();
-    return FfiRecording._(this, format);
+    return FfiRecording._(this, format, deviceId);
   }
 
   @override
@@ -221,8 +277,13 @@ class FfiBackend extends CaptureBackend {
 /// A single FFI-backed recording. Polls `microphone_read` to drain captured PCM
 /// into the [frames] stream and an accumulating buffer.
 class FfiRecording implements Recording {
-  FfiRecording._(this._backend, CaptureFormat requested) {
-    _id = _b.start(_recorder, requested.sampleRate, requested.channels);
+  FfiRecording._(this._backend, CaptureFormat requested, String? deviceId) {
+    final cId = deviceId == null ? nullptr : deviceId.toNativeUtf8();
+    try {
+      _id = _b.start(_recorder, requested.sampleRate, requested.channels, cId);
+    } finally {
+      if (cId != nullptr) malloc.free(cId);
+    }
     if (_id == 0) {
       throw CaptureException('capture failed: ${_backend._lastError()}');
     }

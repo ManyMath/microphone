@@ -87,27 +87,46 @@ impl Recorder {
     }
 
     #[cfg(any(target_os = "macos", target_os = "ios"))]
-    fn open_source(&self, channels: u32, rate: u32) -> Result<Box<dyn PcmSource>, String> {
+    fn open_source(
+        &self,
+        channels: u32,
+        rate: u32,
+        device_id: Option<&str>,
+    ) -> Result<Box<dyn PcmSource>, String> {
         // iOS gates audio input behind an active AVAudioSession; macOS does not.
         #[cfg(target_os = "ios")]
         ios_session::activate()?;
-        let cap = coreaudio::CoreAudioCapture::open(&self.coreaudio, channels, rate)?;
+        // device_id selects a specific input on macOS (the AudioQueue's current
+        // device, by UID); iOS routes through AVAudioSession, so it is ignored.
+        let cap = coreaudio::CoreAudioCapture::open(&self.coreaudio, channels, rate, device_id)?;
         Ok(Box::new(cap))
     }
 
     #[cfg(target_os = "android")]
-    fn open_source(&self, channels: u32, rate: u32) -> Result<Box<dyn PcmSource>, String> {
+    fn open_source(
+        &self,
+        channels: u32,
+        rate: u32,
+        device_id: Option<&str>,
+    ) -> Result<Box<dyn PcmSource>, String> {
+        // AAudio input device selection (by id) is not wired yet; uses default.
+        let _ = device_id;
         let cap = aaudio::AaudioCapture::open(&self.aaudio, channels, rate)?;
         Ok(Box::new(cap))
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
-    fn open_source(&self, _channels: u32, _rate: u32) -> Result<Box<dyn PcmSource>, String> {
+    fn open_source(
+        &self,
+        _channels: u32,
+        _rate: u32,
+        _device_id: Option<&str>,
+    ) -> Result<Box<dyn PcmSource>, String> {
         Err("native capture is not implemented on this platform yet".into())
     }
 
-    fn start(&self, rate: u32, channels: u32) -> Result<u64, String> {
-        let source = self.open_source(channels, rate)?;
+    fn start(&self, rate: u32, channels: u32, device_id: Option<&str>) -> Result<u64, String> {
+        let source = self.open_source(channels, rate, device_id)?;
         let actual_channels = source.channels();
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let recording = Arc::new(Recording {
@@ -171,14 +190,35 @@ fn with_recorder<'a>(recorder: *mut Recorder) -> Option<&'a Recorder> {
     }
 }
 
-/// Starts capturing at `rate` Hz with `channels` channels. Returns a recording
-/// id, or 0 on error (see [microphone_last_error]).
+/// Starts capturing at `rate` Hz with `channels` channels on the input device
+/// identified by `device_id` (a NUL-terminated UID, or null for the system
+/// default). Returns a recording id, or 0 on error (see [microphone_last_error]).
+///
+/// # Safety
+/// `device_id`, if non-null, must be a valid NUL-terminated C string.
 #[no_mangle]
-pub extern "C" fn microphone_start(recorder: *mut Recorder, rate: u32, channels: u32) -> u64 {
+pub unsafe extern "C" fn microphone_start(
+    recorder: *mut Recorder,
+    rate: u32,
+    channels: u32,
+    device_id: *const c_char,
+) -> u64 {
     let Some(recorder) = with_recorder(recorder) else {
         return 0;
     };
-    match recorder.start(rate, channels) {
+    let device = if device_id.is_null() {
+        None
+    } else {
+        match std::ffi::CStr::from_ptr(device_id).to_str() {
+            Ok(s) if !s.is_empty() => Some(s),
+            Ok(_) => None,
+            Err(_) => {
+                set_last_error("device_id is not valid UTF-8");
+                return 0;
+            }
+        }
+    };
+    match recorder.start(rate, channels, device) {
         Ok(id) => id,
         Err(e) => {
             set_last_error(e);
@@ -337,4 +377,92 @@ pub extern "C" fn microphone_recording_free(recorder: *mut Recorder, id: u64) ->
 #[no_mangle]
 pub extern "C" fn microphone_last_error() -> *const c_char {
     LAST_ERROR.with(|e| e.borrow().as_ptr())
+}
+
+// ---------------------------------------------------------------------------
+// Device enumeration
+// ---------------------------------------------------------------------------
+
+/// A selectable input device.
+pub(crate) struct DeviceInfo {
+    pub id: String,
+    pub name: String,
+    pub is_default: bool,
+}
+
+/// Lists input devices for the current platform. Only macOS enumerates today;
+/// other platforms return an empty list and capture uses the system default.
+fn enumerate_input_devices() -> Vec<DeviceInfo> {
+    #[cfg(target_os = "macos")]
+    {
+        coreaudio::enumerate_input_devices()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Vec::new()
+    }
+}
+
+thread_local! {
+    // The device list is snapshotted on microphone_device_count and read by the
+    // id/name/default accessors, so a caller iterates a stable list.
+    static DEVICE_CACHE: RefCell<Vec<DeviceInfo>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Refreshes the device list and returns how many input devices there are.
+#[no_mangle]
+pub extern "C" fn microphone_device_count() -> c_int {
+    let devices = enumerate_input_devices();
+    let n = devices.len() as c_int;
+    DEVICE_CACHE.with(|c| *c.borrow_mut() = devices);
+    n
+}
+
+/// Copies device `index`'s UID into `out` (NUL-terminated). Returns the string
+/// length written (excluding NUL), or -1 if the index is out of range / `out`
+/// is too small. Call [microphone_device_count] first.
+///
+/// # Safety
+/// `out` must point to `cap` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn microphone_device_id(index: c_int, out: *mut c_char, cap: usize) -> c_int {
+    DEVICE_CACHE.with(|c| copy_field(c.borrow().get(index as usize).map(|d| &d.id), out, cap))
+}
+
+/// Copies device `index`'s display name into `out`. See [microphone_device_id].
+///
+/// # Safety
+/// `out` must point to `cap` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn microphone_device_name(
+    index: c_int,
+    out: *mut c_char,
+    cap: usize,
+) -> c_int {
+    DEVICE_CACHE.with(|c| copy_field(c.borrow().get(index as usize).map(|d| &d.name), out, cap))
+}
+
+/// Returns 1 if device `index` is the system default input, 0 if not, -1 if the
+/// index is out of range.
+#[no_mangle]
+pub extern "C" fn microphone_device_is_default(index: c_int) -> c_int {
+    DEVICE_CACHE.with(|c| match c.borrow().get(index as usize) {
+        Some(d) => d.is_default as c_int,
+        None => -1,
+    })
+}
+
+/// Copies `field` as a NUL-terminated C string into `out`. Returns the byte
+/// length (excluding NUL), or -1 if `field` is None or does not fit.
+unsafe fn copy_field(field: Option<&String>, out: *mut c_char, cap: usize) -> c_int {
+    let Some(s) = field else {
+        return -1;
+    };
+    let bytes = s.as_bytes();
+    if out.is_null() || bytes.len() + 1 > cap {
+        return -1;
+    }
+    std::ptr::copy_nonoverlapping(bytes.as_ptr() as *const c_char, out, bytes.len());
+    *out.add(bytes.len()) = 0;
+    bytes.len() as c_int
 }

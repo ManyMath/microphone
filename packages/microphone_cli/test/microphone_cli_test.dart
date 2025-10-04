@@ -29,8 +29,12 @@ class _ProbeBackend extends CaptureBackend {
   Future<bool> requestPermission() async => true;
 
   @override
+  Future<List<CaptureDevice>> devices() async => const [];
+
+  @override
   Future<Recording> startRecording({
     CaptureFormat format = const CaptureFormat(),
+    String? deviceId,
   }) async => SilentRecording(format, const Duration(milliseconds: 10));
 
   @override
@@ -97,6 +101,13 @@ void main() {
       expect(recording.isRecording, isTrue);
       await recording.stop();
       expect(recording.state, RecordingState.stopped);
+    });
+
+    test('devices lists the active backend inputs', () async {
+      Microphone.registerBackend(SilentBackend(), makeActive: true);
+      final devices = await Microphone.devices();
+      expect(devices, hasLength(1));
+      expect(devices.single.isDefault, isTrue);
     });
 
     test('initialize is called once per backend', () async {

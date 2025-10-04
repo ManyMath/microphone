@@ -8,6 +8,7 @@ library;
 
 export 'src/backends/silent_backend.dart';
 export 'src/capture_backend.dart';
+export 'src/capture_device.dart';
 export 'src/capture_format.dart';
 export 'src/exceptions.dart';
 export 'src/level.dart';

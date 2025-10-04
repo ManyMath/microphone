@@ -17,3 +17,7 @@
 - Web capture backend (getUserMedia + Web Audio).
 - `AudioLevel` (RMS/peak, with dBFS) and a `Recording.levels()` stream for live
   input metering.
+- Native pause/resume that drops audio captured while paused (no silent gap).
+- Input device enumeration (`Microphone.devices()`, `CaptureDevice`) and
+  selection (`record(deviceId: ...)`). macOS lists/selects via CoreAudio; the
+  web via getUserMedia/enumerateDevices.

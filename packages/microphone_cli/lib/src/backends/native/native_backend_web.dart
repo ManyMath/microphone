@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:web/web.dart' as web;
 
 import '../../capture_backend.dart';
+import '../../capture_device.dart';
 import '../../capture_format.dart';
 import '../../exceptions.dart';
 import '../../recording.dart';
@@ -45,7 +46,7 @@ class WebCaptureBackend extends CaptureBackend {
   @override
   Future<bool> requestPermission() async {
     try {
-      final stream = await _getUserMedia();
+      final stream = await _getUserMedia(null);
       // Granting is enough; stop the probe stream so we do not hold the device.
       for (final track in _tracks(stream)) {
         track.stop();
@@ -57,12 +58,38 @@ class WebCaptureBackend extends CaptureBackend {
   }
 
   @override
+  Future<List<CaptureDevice>> devices() async {
+    try {
+      final infos =
+          (await web.window.navigator.mediaDevices.enumerateDevices().toDart)
+              .toDart;
+      final out = <CaptureDevice>[];
+      for (final info in infos) {
+        if (info.kind != 'audioinput') continue;
+        // Browsers hide labels until permission is granted; "default" is the
+        // well-known id for the system default input.
+        out.add(
+          CaptureDevice(
+            id: info.deviceId,
+            label: info.label.isEmpty ? 'Microphone' : info.label,
+            isDefault: info.deviceId == 'default',
+          ),
+        );
+      }
+      return out;
+    } on Object {
+      return const [];
+    }
+  }
+
+  @override
   Future<Recording> startRecording({
     CaptureFormat format = const CaptureFormat(),
+    String? deviceId,
   }) async {
     final web.MediaStream stream;
     try {
-      stream = await _getUserMedia();
+      stream = await _getUserMedia(deviceId);
     } on Object catch (e) {
       throw PermissionDeniedException(
         'getUserMedia failed (permission denied or no microphone): $e',
@@ -74,9 +101,13 @@ class WebCaptureBackend extends CaptureBackend {
   @override
   Future<void> dispose() async {}
 
-  static Future<web.MediaStream> _getUserMedia() async {
+  static Future<web.MediaStream> _getUserMedia(String? deviceId) async {
     final devices = web.window.navigator.mediaDevices;
-    final constraints = web.MediaStreamConstraints(audio: true.toJS);
+    // Pin a specific input when asked; otherwise accept the default.
+    final JSAny audio = deviceId == null
+        ? true.toJS
+        : web.MediaTrackConstraints(deviceId: deviceId.toJS);
+    final constraints = web.MediaStreamConstraints(audio: audio);
     return devices.getUserMedia(constraints).toDart;
   }
 

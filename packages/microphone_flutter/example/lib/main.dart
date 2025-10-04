@@ -35,13 +35,16 @@ class _RecorderPageState extends State<RecorderPage> {
   StreamSubscription<AudioLevel>? _levels;
   double _level = 0; // 0..1 live RMS level
   Uint8List? _lastWav;
+  List<CaptureDevice> _devices = const [];
+  String? _deviceId; // null = system default
 
   @override
   void initState() {
     super.initState();
-    MicrophoneFlutter.ensureInitialized().then((name) {
+    MicrophoneFlutter.ensureInitialized().then((name) async {
       debugPrint('microphone_cli backend: $name');
       if (mounted) setState(() => _backend = name);
+      await _loadDevices();
       // Headless self-test: when MIC_SELFTEST is set, record ~1s and log the
       // captured byte count, so emulator/simulator runs can be checked from
       // logs without driving the UI.
@@ -78,13 +81,27 @@ class _RecorderPageState extends State<RecorderPage> {
     }
   }
 
+  /// Loads the input device list (labels may need permission on the web).
+  Future<void> _loadDevices() async {
+    try {
+      final devices = await Microphone.devices();
+      if (mounted) setState(() => _devices = devices);
+    } on Object {
+      // Enumeration is best-effort; the default device still works.
+    }
+  }
+
   Future<void> _start() async {
     if (!await Microphone.requestPermission()) {
       setState(() => _status = 'permission denied');
       return;
     }
+    // Web labels appear only after permission; refresh once granted.
+    if (_devices.every((d) => d.label.isEmpty || d.label == 'Microphone')) {
+      await _loadDevices();
+    }
     try {
-      final recording = await Microphone.record();
+      final recording = await Microphone.record(deviceId: _deviceId);
       _levels = recording.levels().listen((level) {
         if (mounted) setState(() => _level = level.rms);
       });
@@ -139,6 +156,29 @@ class _RecorderPageState extends State<RecorderPage> {
             Text('Backend: $_backend'),
             const SizedBox(height: 8),
             Text('Status: $_status'),
+            const SizedBox(height: 16),
+            // Input device picker (when enumeration is available).
+            if (_devices.isNotEmpty)
+              DropdownButton<String?>(
+                isExpanded: true,
+                value: _deviceId,
+                hint: const Text('System default'),
+                onChanged: recording
+                    ? null
+                    : (id) => setState(() => _deviceId = id),
+                items: [
+                  const DropdownMenuItem<String?>(
+                    child: Text('System default'),
+                  ),
+                  for (final d in _devices)
+                    DropdownMenuItem<String?>(
+                      value: d.id,
+                      child: Text(
+                        d.isDefault ? '${d.label} (default)' : d.label,
+                      ),
+                    ),
+                ],
+              ),
             const SizedBox(height: 24),
             // Live input level.
             LinearProgressIndicator(value: _level, minHeight: 12),

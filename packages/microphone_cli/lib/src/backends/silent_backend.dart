@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import '../capture_backend.dart';
+import '../capture_device.dart';
 import '../capture_format.dart';
 import '../file_writer.dart';
 import '../recording.dart';
@@ -41,8 +42,14 @@ class SilentBackend extends CaptureBackend {
   Future<bool> requestPermission() async => true;
 
   @override
+  Future<List<CaptureDevice>> devices() async => const [
+    CaptureDevice(id: 'silent', label: 'Silent (no device)', isDefault: true),
+  ];
+
+  @override
   Future<Recording> startRecording({
     CaptureFormat format = const CaptureFormat(),
+    String? deviceId,
   }) async {
     final recording = SilentRecording(format, chunk);
     started.add(recording);

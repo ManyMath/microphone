@@ -37,7 +37,8 @@ fn main() {
         }
         // On macOS the first AudioQueue input call blocks until the microphone
         // permission prompt is answered; grant it when it appears.
-        let id = microphone_start(recorder, rate, channels);
+        // Null device_id captures from the system default input.
+        let id = microphone_start(recorder, rate, channels, std::ptr::null());
         if id == 0 {
             let msg = CStr::from_ptr(microphone_last_error()).to_string_lossy();
             eprintln!("start failed: {msg}");

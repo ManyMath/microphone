@@ -1,6 +1,7 @@
 import 'backends/native/native_backend.dart';
 import 'backends/silent_backend.dart';
 import 'capture_backend.dart';
+import 'capture_device.dart';
 import 'capture_format.dart';
 import 'exceptions.dart';
 import 'recording.dart';
@@ -102,19 +103,25 @@ class Microphone {
   static Future<bool> requestPermission() => backend.requestPermission();
 
   /// Starts a recording with the active backend.
+  /// Lists the available input devices on the active backend. See
+  /// [CaptureBackend.devices].
+  static Future<List<CaptureDevice>> devices() => backend.devices();
+
   ///
   /// [format] requests a sample rate / channel count / encoding; the device may
   /// force its own, so consult [Recording.format] for what is actually in
-  /// effect. Throws [PermissionDeniedException] if access is refused.
+  /// effect. [deviceId] selects an input from [devices] (null = system
+  /// default). Throws [PermissionDeniedException] if access is refused.
   static Future<Recording> record({
     CaptureFormat format = const CaptureFormat(),
+    String? deviceId,
   }) async {
     final b = backend;
     if (!_initialized.contains(b)) {
       await b.initialize();
       _initialized.add(b);
     }
-    return b.startRecording(format: format);
+    return b.startRecording(format: format, deviceId: deviceId);
   }
 
   /// Disposes the active backend and clears selection/registry.

@@ -88,6 +88,28 @@ void main() {
         await recording.dispose();
       });
 
+      test('enumerates input devices with a default', () async {
+        Microphone.registerBackend(FfiBackend(), makeActive: true);
+        final devices = await Microphone.devices();
+        // A dev Mac has at least the built-in mic.
+        expect(devices, isNotEmpty);
+        expect(devices.where((d) => d.isDefault), isNotEmpty);
+        expect(devices.every((d) => d.id.isNotEmpty), isTrue);
+        expect(devices.every((d) => d.label.isNotEmpty), isTrue);
+      });
+
+      test('records from a selected device by id', () async {
+        Microphone.registerBackend(FfiBackend(), makeActive: true);
+        final devices = await Microphone.devices();
+        final device = devices.firstWhere((d) => d.isDefault);
+        final recording = await Microphone.record(deviceId: device.id);
+        expect(recording.isRecording, isTrue);
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        final wav = await recording.stop();
+        expect(wav.length, greaterThan(44));
+        await recording.dispose();
+      });
+
       test('dispose is idempotent and stop-after-dispose is safe', () async {
         Microphone.registerBackend(FfiBackend(), makeActive: true);
         final recording = await Microphone.record();
