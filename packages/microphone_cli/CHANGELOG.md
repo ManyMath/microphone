@@ -21,3 +21,6 @@
 - Input device enumeration (`Microphone.devices()`, `CaptureDevice`) and
   selection (`record(deviceId: ...)`). macOS lists/selects via CoreAudio; the
   web via getUserMedia/enumerateDevices.
+- Configurable sample rate / channels honored where the platform supports it
+  (macOS verified for 8/16/44.1/48 kHz, mono and stereo); resample policy
+  documented on `CaptureFormat`.

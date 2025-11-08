@@ -88,6 +88,27 @@ void main() {
         await recording.dispose();
       });
 
+      test('honors a non-default sample rate and stereo', () async {
+        Microphone.registerBackend(FfiBackend(), makeActive: true);
+        // 16 kHz mono.
+        final mono = await Microphone.record(
+          format: const CaptureFormat(sampleRate: 16000, channels: 1),
+        );
+        expect(mono.format.sampleRate, 16000);
+        expect(mono.format.channels, 1);
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        await mono.stop();
+        await mono.dispose();
+        // 44.1 kHz stereo.
+        final stereo = await Microphone.record(
+          format: const CaptureFormat(sampleRate: 44100, channels: 2),
+        );
+        expect(stereo.format.channels, 2);
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        await stereo.stop();
+        await stereo.dispose();
+      });
+
       test('enumerates input devices with a default', () async {
         Microphone.registerBackend(FfiBackend(), makeActive: true);
         final devices = await Microphone.devices();
