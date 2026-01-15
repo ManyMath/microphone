@@ -13,13 +13,13 @@ topics:
   - ffi
 
 environment:
-  sdk: ^3.5.0
+  sdk: ^3.10.0
 
 resolution: workspace
 
 dependencies:
   ffi: ^2.1.0
-  web: ^1.0.0
+  web: ^1.1.0
 
 dev_dependencies:
   lints: ^6.0.0

@@ -4,10 +4,11 @@ publish_to: none
 version: 0.1.0
 
 environment:
-  sdk: ^3.5.0
+  sdk: ^3.10.0
 
 dependencies:
-  native_assets_cli: ^0.10.0
+  hooks: ^1.0.2
+  code_assets: ^1.0.0
   build_tool:
     path: ../../build_tool
   ffi: ^2.1.0
