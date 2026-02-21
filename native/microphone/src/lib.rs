@@ -20,6 +20,9 @@ mod ios_session;
 #[cfg(target_os = "android")]
 mod aaudio;
 
+#[cfg(target_os = "windows")]
+mod winmm;
+
 /// A platform audio input that yields interleaved S16LE frames on demand.
 pub(crate) trait PcmSource: Send + Sync {
     /// Drains and returns up to `max` of the samples captured since the last
@@ -72,6 +75,8 @@ pub struct Recorder {
     coreaudio: Arc<coreaudio::CoreAudio>,
     #[cfg(target_os = "android")]
     aaudio: Arc<aaudio::Aaudio>,
+    #[cfg(target_os = "windows")]
+    winmm: Arc<winmm::Winmm>,
 }
 
 impl Recorder {
@@ -83,6 +88,8 @@ impl Recorder {
             coreaudio: Arc::new(coreaudio::CoreAudio::load()?),
             #[cfg(target_os = "android")]
             aaudio: Arc::new(aaudio::Aaudio::load()?),
+            #[cfg(target_os = "windows")]
+            winmm: Arc::new(winmm::Winmm::load()?),
         })
     }
 
@@ -115,7 +122,25 @@ impl Recorder {
         Ok(Box::new(cap))
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
+    #[cfg(target_os = "windows")]
+    fn open_source(
+        &self,
+        channels: u32,
+        rate: u32,
+        device_id: Option<&str>,
+    ) -> Result<Box<dyn PcmSource>, String> {
+        // device_id, when set, is a waveIn device index (see
+        // winmm::enumerate_input_devices); null selects the preferred input.
+        let cap = winmm::WinmmCapture::open(&self.winmm, channels, rate, device_id)?;
+        Ok(Box::new(cap))
+    }
+
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "android",
+        target_os = "windows"
+    )))]
     fn open_source(
         &self,
         _channels: u32,
@@ -390,14 +415,18 @@ pub(crate) struct DeviceInfo {
     pub is_default: bool,
 }
 
-/// Lists input devices for the current platform. Only macOS enumerates today;
+/// Lists input devices for the current platform. macOS and Windows enumerate;
 /// other platforms return an empty list and capture uses the system default.
 fn enumerate_input_devices() -> Vec<DeviceInfo> {
     #[cfg(target_os = "macos")]
     {
         coreaudio::enumerate_input_devices()
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        winmm::enumerate_input_devices()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         Vec::new()
     }
