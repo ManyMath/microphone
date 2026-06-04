@@ -1,8 +1,8 @@
 # microphone_flutter
 
 Flutter integration for [`microphone_dart`](../microphone_dart):
-cross-platform microphone capture with **no system dependencies** for your users
-to install.
+cross-platform microphone capture with the goal of no system dependencies for 
+users or devs to install.
 
 This package builds the shared `microphone` Rust crate automatically (via
 [cargokit](https://github.com/ManyMath/cargokit)) and bundles it with your app,
@@ -35,7 +35,7 @@ the example app for working configuration.
 ## Precompiled binaries
 
 Building requires Rust (`rustup`). To remove even that for consumers, the repo
-is set up for cargokit **precompiled binaries**:
+is set up for cargokit precompiled binaries:
 
 - `native/microphone/cargokit.yaml` holds the public signing key and the
   release URL prefix.
