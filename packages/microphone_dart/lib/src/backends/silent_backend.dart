@@ -10,7 +10,7 @@ import '../wav.dart';
 
 /// A backend that captures silence.
 ///
-/// It is the lowest-priority fallback so that `microphone_cli` never
+/// It is the lowest-priority fallback so that `microphone_dart` never
 /// crashes in environments without a microphone (CI, headless servers). It is
 /// also a convenient test double: it produces well-formed, all-zero PCM at the
 /// requested rate so file/stream plumbing can be exercised without hardware.

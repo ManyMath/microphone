@@ -27,7 +27,7 @@
 	<key>NSMainNibFile</key>
 	<string>MainMenu</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>This example records audio to demonstrate microphone_cli.</string>
+	<string>This example records audio to demonstrate microphone_dart.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>

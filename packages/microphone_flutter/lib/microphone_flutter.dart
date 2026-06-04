@@ -1,8 +1,8 @@
-/// Flutter integration for the `microphone_cli` package.
+/// Flutter integration for the `microphone_dart` package.
 ///
 /// This package contributes the native `microphone` library to your Flutter app
 /// (built automatically via cargokit) and re-exports the full
-/// `microphone_cli` API. In most cases you only need the re-exported
+/// `microphone_dart` API. In most cases you only need the re-exported
 /// [Microphone] entry point:
 ///
 /// ```dart
@@ -31,15 +31,15 @@
 /// backend prompts via getUserMedia.
 library;
 
-import 'package:microphone_cli/microphone_cli.dart';
+import 'package:microphone_dart/microphone_dart.dart';
 
-export 'package:microphone_cli/microphone_cli.dart';
+export 'package:microphone_dart/microphone_dart.dart';
 
-/// Flutter-side conveniences over the `microphone_cli` registry.
+/// Flutter-side conveniences over the `microphone_dart` registry.
 abstract final class MicrophoneFlutter {
   /// Ensures a capture backend is selected and ready.
   ///
-  /// On native platforms `microphone_cli` already auto-registers the FFI
+  /// On native platforms `microphone_dart` already auto-registers the FFI
   /// backend that loads the bundled `microphone` library; this initializes it
   /// eagerly so the first [Microphone.record] has no setup latency, and
   /// surfaces load errors early. Returns the name of the active backend (e.g.

@@ -1,12 +1,12 @@
 # microphone_flutter
 
-Flutter integration for [`microphone_cli`](../microphone_cli):
+Flutter integration for [`microphone_dart`](../microphone_dart):
 cross-platform microphone capture with **no system dependencies** for your users
 to install.
 
 This package builds the shared `microphone` Rust crate automatically (via
 [cargokit](https://github.com/ManyMath/cargokit)) and bundles it with your app,
-then re-exports the full `microphone_cli` API.
+then re-exports the full `microphone_dart` API.
 
 ```dart
 import 'package:microphone_flutter/microphone_flutter.dart';

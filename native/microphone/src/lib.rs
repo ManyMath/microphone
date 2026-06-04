@@ -1,4 +1,4 @@
-//! C ABI for the `microphone_cli` package's native capture.
+//! C ABI for the `microphone_dart` package's native capture.
 //!
 //! The Dart `FfiBackend` calls these functions. `microphone_start` opens a
 //! platform capture and returns an opaque recording id; the Dart side then

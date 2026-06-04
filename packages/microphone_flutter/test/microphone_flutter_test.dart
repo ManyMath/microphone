@@ -7,7 +7,7 @@ void main() {
   setUp(() => Microphone.reset());
   tearDown(() => Microphone.reset());
 
-  test('re-exports the microphone_cli API', () {
+  test('re-exports the microphone_dart API', () {
     // The Microphone entry point and core types come through the re-export.
     Microphone.registerBackend(SilentBackend(), makeActive: true);
     expect(Microphone.backend.name, 'silent');

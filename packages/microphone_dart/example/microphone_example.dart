@@ -1,11 +1,11 @@
-// Records from the microphone using `microphone_cli` (pure Dart, no
+// Records from the microphone using `microphone_dart` (pure Dart, no
 // Flutter) and writes a WAV file.
 //
 // Build the native library first:
 //   cargo build --manifest-path native/microphone/Cargo.toml
 // then, from the repo root:
-//   dart run packages/microphone_cli/example/microphone_example.dart
-//   dart run packages/microphone_cli/example/microphone_example.dart out.wav 5
+//   dart run packages/microphone_dart/example/microphone_example.dart
+//   dart run packages/microphone_dart/example/microphone_example.dart out.wav 5
 //
 // Until the native backend lands the active backend is `silent`, which records
 // silence so the plumbing is exercised end to end. If the library is elsewhere,
@@ -13,7 +13,7 @@
 
 import 'dart:io';
 
-import 'package:microphone_cli/microphone_cli.dart';
+import 'package:microphone_dart/microphone_dart.dart';
 
 Future<void> main(List<String> args) async {
   final path = args.isNotEmpty ? args.first : 'recording.wav';

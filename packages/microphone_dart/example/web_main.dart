@@ -1,15 +1,15 @@
-// Web example for `microphone_cli`. Records from the browser microphone via
+// Web example for `microphone_dart`. Records from the browser microphone via
 // the WebCaptureBackend and offers the captured WAV as a download.
 //
 // Build and serve:
-//   ./packages/microphone_cli/example/serve_web.sh
+//   ./packages/microphone_dart/example/serve_web.sh
 // then open the printed URL and click "Record" (a user gesture is required
 // before the browser will grant microphone access).
 
 import 'dart:js_interop';
 import 'dart:typed_data';
 
-import 'package:microphone_cli/microphone_cli.dart';
+import 'package:microphone_dart/microphone_dart.dart';
 import 'package:web/web.dart' as web;
 
 Recording? _recording;

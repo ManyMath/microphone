@@ -8,7 +8,7 @@ import 'recording.dart';
 
 /// Entry point for recording audio.
 ///
-/// `microphone_cli` keeps a registry of [CaptureBackend]s and picks the
+/// `microphone_dart` keeps a registry of [CaptureBackend]s and picks the
 /// best available one for the current environment (highest
 /// [CaptureBackend.priority] among those whose [CaptureBackend.isAvailable] is
 /// true). Apps can register extra backends or pin a specific one.
@@ -26,7 +26,7 @@ class Microphone {
   static CaptureBackend? _active;
   static bool _defaultsRegistered = false;
 
-  /// Registers the backends that ship with `microphone_cli`.
+  /// Registers the backends that ship with `microphone_dart`.
   ///
   /// Backends from outside packages register themselves; this only seeds the
   /// always-present floor.

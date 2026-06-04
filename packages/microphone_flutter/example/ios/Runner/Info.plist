@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>This example records audio to demonstrate microphone_cli.</string>
+	<string>This example records audio to demonstrate microphone_dart.</string>
 	<key>CFBundleDisplayName</key>
 	<string>Microphone Control Flutter</string>
 	<key>CFBundleExecutable</key>

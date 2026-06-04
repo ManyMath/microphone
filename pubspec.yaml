@@ -1,4 +1,4 @@
-name: microphone_cli_workspace
+name: microphone_workspace
 publish_to: none
 
 # Dart pub workspace root. Member packages set `resolution: workspace` and
@@ -7,7 +7,7 @@ environment:
   sdk: ^3.10.0
 
 workspace:
-  - packages/microphone_cli
+  - packages/microphone_dart
   - packages/microphone_flutter
   - packages/microphone_flutter/example
 
@@ -17,31 +17,31 @@ dev_dependencies:
 # Melos 7 reads its configuration from here (the pub-workspace root). Scripts
 # mirror CI and use the right tool per package (dart vs flutter).
 melos:
-  name: microphone_cli
+  name: microphone
   scripts:
     analyze:
       description: Analyze all packages.
       run: >-
-        dart analyze packages/microphone_cli &&
+        dart analyze packages/microphone_dart &&
         flutter analyze packages/microphone_flutter
     format:
       description: Check Dart formatting.
       run: >-
         dart format --output none --set-exit-if-changed
-        packages/microphone_cli
+        packages/microphone_dart
         packages/microphone_flutter/lib
         packages/microphone_flutter/example/lib
     format:fix:
       description: Apply Dart formatting.
       run: >-
         dart format
-        packages/microphone_cli
+        packages/microphone_dart
         packages/microphone_flutter/lib
         packages/microphone_flutter/example/lib
     test:
       description: Run Dart and Flutter tests.
       run: >-
-        dart test packages/microphone_cli &&
+        dart test packages/microphone_dart &&
         flutter test packages/microphone_flutter/test
     native:build:
       description: Build the microphone shared library (for CLI/dev use).

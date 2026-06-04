@@ -3,9 +3,9 @@
 .packages
 
 # Compiled web example output (build artifact)
-packages/microphone_cli/example/web/main.dart.js
-packages/microphone_cli/example/web/main.dart.js.deps
-packages/microphone_cli/example/web/main.dart.js.map
+packages/microphone_dart/example/web/main.dart.js
+packages/microphone_dart/example/web/main.dart.js.deps
+packages/microphone_dart/example/web/main.dart.js.map
 
 # Build artifacts
 build/

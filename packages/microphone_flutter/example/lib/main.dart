@@ -14,7 +14,7 @@ class MicrophoneApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'microphone_cli',
+      title: 'microphone_dart',
       theme: ThemeData(colorSchemeSeed: Colors.indigo, useMaterial3: true),
       home: const RecorderPage(),
     );
@@ -42,7 +42,7 @@ class _RecorderPageState extends State<RecorderPage> {
   void initState() {
     super.initState();
     MicrophoneFlutter.ensureInitialized().then((name) async {
-      debugPrint('microphone_cli backend: $name');
+      debugPrint('microphone_dart backend: $name');
       if (mounted) setState(() => _backend = name);
       await _loadDevices();
       // Headless self-test: when MIC_SELFTEST is set, record ~1s and log the
@@ -147,7 +147,7 @@ class _RecorderPageState extends State<RecorderPage> {
     final recording = _recording != null;
     final paused = _recording?.state == RecordingState.paused;
     return Scaffold(
-      appBar: AppBar(title: const Text('microphone_cli')),
+      appBar: AppBar(title: const Text('microphone_dart')),
       body: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(

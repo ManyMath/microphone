@@ -1,4 +1,4 @@
-/// Base class for all errors thrown by `microphone_cli`.
+/// Base class for all errors thrown by `microphone_dart`.
 class MicrophoneException implements Exception {
   const MicrophoneException(this.message);
 

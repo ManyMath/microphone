@@ -1,7 +1,7 @@
 import '../../capture_backend.dart';
 
 // Selects the FFI implementation on native platforms and the web capture
-// backend on the web, so importing `microphone_cli` never pulls in
+// backend on the web, so importing `microphone_dart` never pulls in
 // `dart:ffi` where it does not exist.
 import 'native_backend_ffi.dart'
     if (dart.library.js_interop) 'native_backend_web.dart'

@@ -3,8 +3,8 @@ library;
 
 import 'dart:typed_data';
 
-import 'package:microphone_cli/microphone_cli.dart';
-import 'package:microphone_cli/src/backends/native/native_backend_ffi.dart';
+import 'package:microphone_dart/microphone_dart.dart';
+import 'package:microphone_dart/src/backends/native/native_backend_ffi.dart';
 import 'package:test/test.dart';
 
 void main() {
