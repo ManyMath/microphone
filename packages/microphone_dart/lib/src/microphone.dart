@@ -24,6 +24,9 @@ class Microphone {
   static final List<CaptureBackend> _backends = [];
   static final Set<CaptureBackend> _initialized = Set.identity();
   static CaptureBackend? _active;
+  // Whether _active was pinned explicitly (makeActive/useBackend) rather than
+  // priority-selected; a pinned backend survives later registrations.
+  static bool _pinned = false;
   static bool _defaultsRegistered = false;
 
   /// Registers the backends that ship with `microphone_dart`.
@@ -49,7 +52,9 @@ class Microphone {
   /// Adds [backend] to the registry.
   ///
   /// Pass [makeActive] to select it immediately regardless of priority.
-  /// Re-registering an instance is a no-op.
+  /// Re-registering an instance is a no-op. A backend pinned earlier (via
+  /// [makeActive] or [useBackend]) stays active; only a priority-based
+  /// selection is redone.
   static void registerBackend(
     CaptureBackend backend, {
     bool makeActive = false,
@@ -58,7 +63,8 @@ class Microphone {
     if (!_backends.contains(backend)) _backends.add(backend);
     if (makeActive) {
       _active = backend;
-    } else {
+      _pinned = true;
+    } else if (!_pinned) {
       // Force re-selection so a newly added, higher-priority backend wins.
       _active = null;
     }
@@ -85,6 +91,7 @@ class Microphone {
       );
     }
     _active = match.first;
+    _pinned = true;
   }
 
   static CaptureBackend _select() {
@@ -102,26 +109,34 @@ class Microphone {
   /// [CaptureBackend.requestPermission].
   static Future<bool> requestPermission() => backend.requestPermission();
 
-  /// Starts a recording with the active backend.
   /// Lists the available input devices on the active backend. See
   /// [CaptureBackend.devices].
   static Future<List<CaptureDevice>> devices() => backend.devices();
 
+  /// Starts a recording with the active backend.
   ///
   /// [format] requests a sample rate / channel count / encoding; the device may
   /// force its own, so consult [Recording.format] for what is actually in
   /// effect. [deviceId] selects an input from [devices] (null = system
-  /// default). Throws [PermissionDeniedException] if access is refused.
+  /// default). [retainPcm] is as on [CaptureBackend.startRecording]: pass
+  /// false for an open-ended live stream so the recording does not accumulate
+  /// PCM without bound. Throws [PermissionDeniedException] if access is
+  /// refused.
   static Future<Recording> record({
     CaptureFormat format = const CaptureFormat(),
     String? deviceId,
+    bool retainPcm = true,
   }) async {
     final b = backend;
     if (!_initialized.contains(b)) {
       await b.initialize();
       _initialized.add(b);
     }
-    return b.startRecording(format: format, deviceId: deviceId);
+    return b.startRecording(
+      format: format,
+      deviceId: deviceId,
+      retainPcm: retainPcm,
+    );
   }
 
   /// Disposes the active backend and clears selection/registry.
@@ -134,6 +149,7 @@ class Microphone {
     _initialized.clear();
     _backends.clear();
     _active = null;
+    _pinned = false;
     _defaultsRegistered = false;
   }
 }

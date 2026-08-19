@@ -35,6 +35,7 @@ class _ProbeBackend extends CaptureBackend {
   Future<Recording> startRecording({
     CaptureFormat format = const CaptureFormat(),
     String? deviceId,
+    bool retainPcm = true,
   }) async => SilentRecording(format, const Duration(milliseconds: 10));
 
   @override
@@ -89,6 +90,13 @@ void main() {
         () => Microphone.useBackend('nope'),
         throwsA(isA<NoBackendAvailableException>()),
       );
+    });
+
+    test('a pinned backend survives a later registration', () {
+      final pinned = _ProbeBackend('pinned', priority: 1);
+      Microphone.registerBackend(pinned, makeActive: true);
+      Microphone.registerBackend(_ProbeBackend('later', priority: 9000));
+      expect(Microphone.backend.name, 'pinned');
     });
   });
 

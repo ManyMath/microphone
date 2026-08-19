@@ -4,58 +4,74 @@ import 'dart:typed_data';
 import '../capture_backend.dart';
 import '../capture_device.dart';
 import '../capture_format.dart';
-import '../exceptions.dart';
 import '../file_writer.dart';
 import '../recording.dart';
 import '../wav.dart';
 
 /// A capture backend that sums several capture sources into one stream.
 ///
-/// Each source is itself a [CaptureBackend]. On [startRecording] this starts a
-/// recording on every source in the requested [CaptureFormat] and mixes their
-/// frames sample-by-sample, clamped to the signed 16-bit range.
+/// Each source is an ordinary [CaptureBackend]; on [startRecording] this starts
+/// a recording on every source and mixes their [Recording.frames] sample for
+/// sample, clamping the sum to the 16-bit range. The result is a single
+/// [Recording] whose [Recording.frames] -- and therefore the level metering in
+/// `AudioLevel.fromPcm` / `RecordingLevels.levels` -- reflect the blend.
 ///
-/// The first source is the clock: one mixed chunk is emitted per chunk it
-/// delivers, with each other source contributing the samples it has buffered so
-/// far (zero-filled when it has none). This models a continuous primary input
-/// (a microphone) with intermittent secondary inputs (clips), and keeps output
-/// flowing even when a secondary source is silent or has ended. Output stops
-/// when the primary source ends.
+/// Mixing is clocked by one source, the [primary] (the first source by
+/// default). Each chunk the primary delivers becomes one mixed output chunk;
+/// the other sources are buffered and drawn from to match, contributing silence
+/// when they have nothing queued. This keeps the output flowing at the primary's
+/// cadence and never stalls waiting on an idle source -- which is exactly what a
+/// soundboard needs, where the microphone runs continuously (the primary) and
+/// clips come and go. The output ends when the primary ends.
 ///
-/// All sources must capture in the same [CaptureFormat]; mixing does not
-/// resample. A source whose actual [Recording.format] differs throws a
-/// [CaptureException].
+/// All sources are expected to share the mix [format] (sample rate, channels,
+/// S16LE). The format passed to [startRecording] is advisory and ignored in
+/// favor of [format].
 class MixingCaptureBackend extends CaptureBackend {
   MixingCaptureBackend(
     List<CaptureBackend> sources, {
-    String name = 'mixing',
-    int priority = 0,
-  }) : _sources = List.unmodifiable(sources),
-       _name = name,
-       _priority = priority {
-    if (_sources.isEmpty) {
-      throw ArgumentError.value(sources, 'sources', 'must not be empty');
-    }
-  }
+    this.format = const CaptureFormat(),
+    this.name = 'mixing',
+    this.priority = 60,
+    int primary = 0,
+    this.ownsSources = true,
+  }) : assert(sources.isNotEmpty, 'at least one source is required'),
+       assert(
+         primary >= 0 && primary < sources.length,
+         'primary index out of range',
+       ),
+       _sources = List.unmodifiable(sources),
+       _primary = primary;
 
   final List<CaptureBackend> _sources;
-  final String _name;
-  final int _priority;
+  final int _primary;
 
-  /// Recordings handed out by this backend, in order. Useful in tests.
-  final List<MixingRecording> started = [];
+  /// Whether [dispose] disposes the sources too. Pass false when the sources
+  /// are shared (e.g. the globally registered hardware backend) and owned by
+  /// someone else.
+  final bool ownsSources;
+
+  /// The format the mixed output is produced in. All sources must match it.
+  final CaptureFormat format;
 
   @override
-  String get name => _name;
+  final String name;
+
+  @override
+  final int priority;
+
+  /// The sources being mixed, in order.
+  List<CaptureBackend> get sources => _sources;
 
   @override
   bool get isAvailable => true;
 
   @override
-  int get priority => _priority;
-
-  @override
-  Future<void> initialize() async {}
+  Future<void> initialize() async {
+    for (final s in _sources) {
+      await s.initialize();
+    }
+  }
 
   @override
   Future<bool> hasPermission() async {
@@ -76,67 +92,85 @@ class MixingCaptureBackend extends CaptureBackend {
 
   @override
   Future<List<CaptureDevice>> devices() async => const [
-    CaptureDevice(id: 'mixing', label: 'Mixed capture', isDefault: true),
+    CaptureDevice(id: 'mixing', label: 'Mixed sources', isDefault: true),
   ];
 
   @override
   Future<Recording> startRecording({
     CaptureFormat format = const CaptureFormat(),
     String? deviceId,
+    bool retainPcm = true,
   }) async {
-    final recordings = <Recording>[];
-    try {
-      for (final s in _sources) {
-        await s.initialize();
-        final r = await s.startRecording(format: format);
-        recordings.add(r);
-        if (r.format != format) {
-          throw CaptureException(
-            'mixing source format ${r.format} does not match requested '
-            '$format',
-          );
-        }
-      }
-    } on Object {
-      for (final r in recordings) {
-        await r.dispose();
-      }
-      rethrow;
+    final children = <Recording>[];
+    for (var i = 0; i < _sources.length; i++) {
+      final s = _sources[i];
+      await s.initialize();
+      // The children only feed the mix through their frames; their own
+      // accumulated PCM is never read, so never retain it. [deviceId] selects
+      // the input of the primary (the microphone), where it is meaningful.
+      children.add(
+        await s.startRecording(
+          format: this.format,
+          deviceId: i == _primary ? deviceId : null,
+          retainPcm: false,
+        ),
+      );
     }
-    final recording = MixingRecording(recordings, format);
-    started.add(recording);
-    recording._start();
-    return recording;
+    return MixingRecording(
+      children,
+      this.format,
+      _primary,
+      retainPcm: retainPcm,
+    );
   }
 
   @override
   Future<void> dispose() async {
+    if (!ownsSources) return;
     for (final s in _sources) {
       await s.dispose();
     }
   }
 }
 
-/// The [Recording] returned by [MixingCaptureBackend]: it clocks off the first
-/// source and sums the rest into each emitted chunk.
+/// The [Recording] returned by [MixingCaptureBackend].
 class MixingRecording implements Recording {
-  MixingRecording(List<Recording> sources, this._format)
-    : _sources = sources,
-      _pending = List<Uint8List>.filled(sources.length, Uint8List(0));
+  MixingRecording(
+    this._children,
+    this._format,
+    this._primary, {
+    bool retainPcm = true,
+  }) : _retainPcm = retainPcm {
+    _state = RecordingState.recording;
+    for (var i = 0; i < _children.length; i++) {
+      _buffers.add(BytesBuilder(copy: false));
+      final index = i;
+      _subs.add(
+        _children[i].frames.listen(
+          (chunk) => _onData(index, chunk),
+          onDone: () => _onDone(index),
+          onError: _onError,
+        ),
+      );
+    }
+  }
 
-  final List<Recording> _sources;
+  static final Uint8List _empty = Uint8List(0);
+
+  final List<Recording> _children;
   final CaptureFormat _format;
+  final int _primary;
+  final bool _retainPcm;
 
-  // Not-yet-consumed bytes per secondary source (index 0, the primary, unused).
-  final List<Uint8List> _pending;
-
+  final List<BytesBuilder> _buffers = [];
   final List<StreamSubscription<Uint8List>> _subs = [];
   final BytesBuilder _pcm = BytesBuilder(copy: false);
+  int _pcmBytes = 0;
   final StreamController<Uint8List> _frames =
       StreamController<Uint8List>.broadcast();
 
   RecordingState _state = RecordingState.idle;
-  Uint8List? _wav;
+  Uint8List? _finalWav;
 
   @override
   RecordingState get state => _state;
@@ -155,93 +189,82 @@ class MixingRecording implements Recording {
 
   @override
   Duration get duration {
-    final frames = _pcm.length ~/ _format.bytesPerFrame;
+    final frameCount = _pcmBytes ~/ _format.bytesPerFrame;
     return Duration(
       microseconds:
-          frames * Duration.microsecondsPerSecond ~/ _format.sampleRate,
+          frameCount * Duration.microsecondsPerSecond ~/ _format.sampleRate,
     );
   }
 
-  void _start() {
-    _state = RecordingState.recording;
-    // Buffer secondaries first so their data is available when the primary
-    // clocks a mix.
-    for (var i = 1; i < _sources.length; i++) {
-      final idx = i;
-      _subs.add(
-        _sources[idx].frames.listen(
-          (chunk) => _onSecondary(idx, chunk),
-          onError: _onError,
-        ),
-      );
+  void _onData(int i, Uint8List chunk) {
+    if (_state == RecordingState.disposed) return;
+    if (i == _primary) {
+      if (_state != RecordingState.recording) return; // dropped while paused
+      _emit(chunk);
+    } else {
+      _buffers[i].add(chunk);
     }
-    _subs.add(
-      _sources[0].frames.listen(
-        _onPrimary,
-        onError: _onError,
-        onDone: _onPrimaryDone,
-      ),
-    );
   }
 
-  void _onPrimary(Uint8List primary) {
-    // While paused, arriving audio is dropped so there is no silent gap.
-    if (_state != RecordingState.recording) return;
-    final mixed = _mix(primary);
-    _pcm.add(mixed);
-    if (!_frames.isClosed) _frames.add(mixed);
-  }
-
-  void _onSecondary(int idx, Uint8List chunk) {
-    if (_state != RecordingState.recording) return;
-    final prev = _pending[idx];
-    final merged = Uint8List(prev.length + chunk.length);
-    merged.setRange(0, prev.length, prev);
-    merged.setRange(prev.length, merged.length, chunk);
-    _pending[idx] = merged;
-  }
-
-  /// Sums [primary] with the buffered head of each secondary, clamped to int16.
-  Uint8List _mix(Uint8List primary) {
-    final n = primary.length - (primary.length % 2); // whole samples only
-    final out = Uint8List(n);
-    final outView = ByteData.sublistView(out);
-    final pView = ByteData.sublistView(primary);
-
-    final secViews = <ByteData>[];
-    for (var i = 1; i < _sources.length; i++) {
-      secViews.add(ByteData.sublistView(_pending[i]));
+  /// Mixes one primary [primaryChunk] with matching bytes drawn from each other
+  /// source's buffer, clamps, and publishes the result.
+  void _emit(Uint8List primaryChunk) {
+    final frameSamples = primaryChunk.length >> 1;
+    if (frameSamples == 0) return;
+    final acc = Int32List(frameSamples);
+    _accumulate(acc, primaryChunk);
+    for (var j = 0; j < _buffers.length; j++) {
+      if (j == _primary) continue;
+      _accumulate(acc, _takeFront(_buffers[j], primaryChunk.length));
     }
-
-    for (var off = 0; off < n; off += 2) {
-      var acc = pView.getInt16(off, Endian.little);
-      for (final sv in secViews) {
-        if (off + 2 <= sv.lengthInBytes) {
-          acc += sv.getInt16(off, Endian.little);
-        }
+    final out = Uint8List(primaryChunk.length);
+    final view = ByteData.sublistView(out);
+    for (var i = 0; i < frameSamples; i++) {
+      var v = acc[i];
+      if (v > 32767) {
+        v = 32767;
+      } else if (v < -32768) {
+        v = -32768;
       }
-      if (acc > 32767) acc = 32767;
-      if (acc < -32768) acc = -32768;
-      outView.setInt16(off, acc, Endian.little);
+      view.setInt16(i << 1, v, Endian.little);
     }
+    _pcmBytes += out.length;
+    if (_retainPcm) _pcm.add(out);
+    if (!_frames.isClosed) _frames.add(out);
+  }
 
-    // Consume the n bytes that were mixed from each secondary buffer.
-    for (var i = 1; i < _sources.length; i++) {
-      final pend = _pending[i];
-      _pending[i] = pend.length <= n
-          ? Uint8List(0)
-          : Uint8List.sublistView(pend, n);
+  /// Adds the S16LE samples in [bytes] into [acc] (truncated to acc's length).
+  static void _accumulate(Int32List acc, Uint8List bytes) {
+    final samples = bytes.length >> 1;
+    final n = samples < acc.length ? samples : acc.length;
+    final view = ByteData.sublistView(bytes);
+    for (var i = 0; i < n; i++) {
+      acc[i] += view.getInt16(i << 1, Endian.little);
     }
-    return out;
+  }
+
+  /// Removes and returns up to [n] bytes from the front of [bb], keeping the
+  /// remainder buffered for the next chunk.
+  static Uint8List _takeFront(BytesBuilder bb, int n) {
+    if (bb.isEmpty) return _empty;
+    final all = bb.toBytes();
+    bb.clear();
+    if (n >= all.length) return all;
+    bb.add(Uint8List.sublistView(all, n));
+    return Uint8List.sublistView(all, 0, n);
   }
 
   void _onError(Object error, StackTrace stack) {
     if (!_frames.isClosed) _frames.addError(error, stack);
   }
 
-  void _onPrimaryDone() {
-    if (_state == RecordingState.recording ||
-        _state == RecordingState.paused) {
+  void _onDone(int i) {
+    // The output is the primary's timeline, so it ends when the primary does.
+    if (i == _primary) _finish();
+  }
+
+  void _finish() {
+    if (_state == RecordingState.recording || _state == RecordingState.paused) {
       _state = RecordingState.stopped;
     }
     if (!_frames.isClosed) _frames.close();
@@ -249,28 +272,41 @@ class MixingRecording implements Recording {
 
   @override
   Future<void> pause() async {
-    if (_state == RecordingState.recording) _state = RecordingState.paused;
+    if (_state == RecordingState.recording) {
+      _state = RecordingState.paused;
+      for (final c in _children) {
+        await c.pause();
+      }
+    }
   }
 
   @override
   Future<void> resume() async {
-    if (_state == RecordingState.paused) _state = RecordingState.recording;
+    if (_state == RecordingState.paused) {
+      _state = RecordingState.recording;
+      for (final c in _children) {
+        await c.resume();
+      }
+    }
   }
 
   @override
   Future<Uint8List> stop() async {
-    if (_state != RecordingState.disposed) {
-      for (final sub in _subs) {
-        await sub.cancel();
+    if (_finalWav != null) return _finalWav!;
+    if (_state != RecordingState.disposed) _state = RecordingState.stopped;
+    for (final s in _subs) {
+      await s.cancel();
+    }
+    _subs.clear();
+    for (final c in _children) {
+      try {
+        await c.stop();
+      } on Object {
+        // A child that fails to stop should not block the others.
       }
-      _subs.clear();
-      for (final r in _sources) {
-        await r.stop();
-      }
-      _state = RecordingState.stopped;
     }
     if (!_frames.isClosed) await _frames.close();
-    return _wav ??= wavFromPcm(_pcm.toBytes(), _format);
+    return _finalWav = wavFromPcm(_pcm.toBytes(), _format);
   }
 
   @override
@@ -282,12 +318,12 @@ class MixingRecording implements Recording {
 
   @override
   Future<void> dispose() async {
-    for (final sub in _subs) {
-      await sub.cancel();
+    for (final s in _subs) {
+      await s.cancel();
     }
     _subs.clear();
-    for (final r in _sources) {
-      await r.dispose();
+    for (final c in _children) {
+      await c.dispose();
     }
     _state = RecordingState.disposed;
     if (!_frames.isClosed) await _frames.close();
