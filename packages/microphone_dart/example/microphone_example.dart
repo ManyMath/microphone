@@ -7,9 +7,8 @@
 //   dart run packages/microphone_dart/example/microphone_example.dart
 //   dart run packages/microphone_dart/example/microphone_example.dart out.wav 5
 //
-// Until the native backend lands the active backend is `silent`, which records
-// silence so the plumbing is exercised end to end. If the library is elsewhere,
-// point to it with MICROPHONE_LIB=/path/to/lib.
+// Set MICROPHONE_LIB=/path/to/lib if the native library is outside the
+// default search paths. The silent backend can test recording without hardware.
 
 import 'dart:io';
 

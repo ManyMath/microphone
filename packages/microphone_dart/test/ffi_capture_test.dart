@@ -38,7 +38,7 @@ void main() {
         expect(_ascii(wav, 36, 40), 'data');
         final view = ByteData.sublistView(wav);
         expect(view.getUint32(40, Endian.little), wav.length - 44);
-        // Some audio was actually captured.
+        // Some audio was captured.
         expect(wav.length, greaterThan(44));
         expect(recording.duration, greaterThan(Duration.zero));
         await recording.dispose();

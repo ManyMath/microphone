@@ -19,7 +19,7 @@ CaptureBackend? createNativeBackend() => WebCaptureBackend();
 /// getUserMedia provides the input stream (and drives the permission prompt); a
 /// ScriptProcessorNode delivers Float32 PCM, which we downconvert to S16LE. The
 /// browser picks the sample rate (usually 48 kHz); [Recording.format] reports
-/// what is actually in effect. File output is unsupported on the web -- use the
+/// what is in effect. File output is unsupported on the web -- use the
 /// WAV bytes from [Recording.stop].
 class WebCaptureBackend extends CaptureBackend {
   @override
