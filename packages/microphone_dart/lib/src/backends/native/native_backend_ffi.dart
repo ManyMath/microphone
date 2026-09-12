@@ -301,7 +301,7 @@ class FfiRecording implements Recording {
     );
     _state = RecordingState.recording;
     // 16384 samples is generous headroom over the ~2205 samples produced per
-    // 50 ms at 44.1 kHz mono, so a poll never leaves much behind.
+    // 50 ms at 44.1 kHz mono; _drain reads repeatedly when more is queued.
     _buf = malloc<Int16>(_readCap);
     _poll = Timer.periodic(const Duration(milliseconds: 50), (_) => _drain());
   }
@@ -349,8 +349,8 @@ class FfiRecording implements Recording {
     );
   }
 
-  /// Copies whatever the native side has captured since the last poll into the
-  /// PCM buffer and the frame stream.
+  /// Copies everything the native side has captured since the last poll into
+  /// the PCM buffer and the frame stream.
   void _drain() {
     if (_id == 0 || _state == RecordingState.disposed) return;
     final native = _b.state(_recorder, _id);
@@ -363,18 +363,21 @@ class FfiRecording implements Recording {
       }
       return;
     }
-    final n = _b.read(_recorder, _id, _buf, _readCap);
-    if (n <= 0) return;
-    // Copy the n captured Int16 samples out of native memory as raw S16LE
-    // bytes. _buf.asTypedList is a view over native memory that the next poll
-    // overwrites, so we make a private copy. The samples are LE on every
-    // platform we target.
-    final view = _buf.asTypedList(n); // Int16List over native memory
-    final bytes = Uint8List(n * 2)
-      ..setRange(0, n * 2, view.buffer.asUint8List(view.offsetInBytes, n * 2));
-    _pcmBytes += bytes.length;
-    if (_retainPcm) _pcm.add(bytes);
-    if (!_frames.isClosed) _frames.add(bytes);
+    // More than one buffer's worth can be queued when a poll runs late (a busy
+    // isolate) and on the final drain in stop(), so read until it runs dry.
+    while (true) {
+      final n = _b.read(_recorder, _id, _buf, _readCap);
+      if (n <= 0) return;
+      // Copy the n captured Int16 samples out of native memory as raw S16LE
+      // bytes. asTypedList is a view over native memory that the next read
+      // overwrites, so we make a private copy. The samples are LE on every
+      // platform we target.
+      final bytes = Uint8List.fromList(_buf.cast<Uint8>().asTypedList(n * 2));
+      _pcmBytes += bytes.length;
+      if (_retainPcm) _pcm.add(bytes);
+      if (!_frames.isClosed) _frames.add(bytes);
+      if (n < _readCap) return;
+    }
   }
 
   void _stopPolling() {

@@ -129,6 +129,24 @@ void main() {
       await recording.dispose();
     });
 
+    test('stop drains audio queued while the isolate was busy', () async {
+      Microphone.registerBackend(FfiBackend(), makeActive: true);
+      final recording = await Microphone.record(
+        format: const CaptureFormat(sampleRate: 48000, channels: 2),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      // Block the event loop so no poll runs: well over one read buffer's
+      // worth of audio piles up natively and must all come out on stop.
+      final busy = Stopwatch()..start();
+      while (busy.elapsedMilliseconds < 1000) {}
+      await recording.stop();
+      expect(
+        recording.duration,
+        greaterThan(const Duration(milliseconds: 1000)),
+      );
+      await recording.dispose();
+    });
+
     test('dispose is idempotent and stop-after-dispose is safe', () async {
       Microphone.registerBackend(FfiBackend(), makeActive: true);
       final recording = await Microphone.record();
