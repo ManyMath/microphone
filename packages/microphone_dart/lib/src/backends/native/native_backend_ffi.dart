@@ -38,10 +38,6 @@ typedef _DeviceField = int Function(int, Pointer<Utf8>, int);
 typedef _DeviceIsDefaultNative = Int32 Function(Int32);
 typedef _DeviceIsDefault = int Function(int);
 
-// Recording state codes mirrored from the native side. Only the error code is
-// acted on here (0 recording / 1 stopped are inferred from our own lifecycle).
-const int _stateError = 2;
-
 /// Locates and opens the `microphone` shared library.
 class NativeLibrary {
   /// Explicit path override, highest priority. Set before first use.
@@ -119,7 +115,6 @@ class _Bindings {
       ),
       start = lib.lookupFunction<_StartNative, _Start>('microphone_start'),
       read = lib.lookupFunction<_ReadNative, _Read>('microphone_read'),
-      state = lib.lookupFunction<_IdQueryNative, _IdQuery>('microphone_state'),
       sampleRate = lib.lookupFunction<_IdQueryNative, _IdQuery>(
         'microphone_sample_rate',
       ),
@@ -155,7 +150,6 @@ class _Bindings {
   final _RecorderFree recorderFree;
   final _Start start;
   final _Read read;
-  final _IdQuery state;
   final _IdQuery sampleRate;
   final _IdQuery channels;
   final _IdQuery pause;
@@ -353,21 +347,17 @@ class FfiRecording implements Recording {
   /// the PCM buffer and the frame stream.
   void _drain() {
     if (_id == 0 || _state == RecordingState.disposed) return;
-    final native = _b.state(_recorder, _id);
-    if (native == _stateError) {
-      _stopPolling();
-      _state = RecordingState.stopped;
-      if (!_frames.isClosed) {
-        _frames.addError(CaptureException(_backend._lastError()));
-        _frames.close();
-      }
-      return;
-    }
     // More than one buffer's worth can be queued when a poll runs late (a busy
     // isolate) and on the final drain in stop(), so read until it runs dry.
     while (true) {
       final n = _b.read(_recorder, _id, _buf, _readCap);
-      if (n <= 0) return;
+      if (n < 0) {
+        // The native error message is thread-local, and by the next poll the
+        // isolate may be running on another OS thread, so fetch it right away.
+        _fail(_backend._lastError());
+        return;
+      }
+      if (n == 0) return;
       // Copy the n captured Int16 samples out of native memory as raw S16LE
       // bytes. asTypedList is a view over native memory that the next read
       // overwrites, so we make a private copy. The samples are LE on every
@@ -377,6 +367,17 @@ class FfiRecording implements Recording {
       if (_retainPcm) _pcm.add(bytes);
       if (!_frames.isClosed) _frames.add(bytes);
       if (n < _readCap) return;
+    }
+  }
+
+  /// Ends the recording after a native capture error, surfacing [message] on
+  /// [frames].
+  void _fail(String message) {
+    _stopPolling();
+    _state = RecordingState.stopped;
+    if (!_frames.isClosed) {
+      _frames.addError(CaptureException(message));
+      _frames.close();
     }
   }
 
