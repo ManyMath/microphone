@@ -167,6 +167,8 @@ class _Bindings {
 class FfiBackend extends CaptureBackend {
   _Bindings? _bindings;
   Pointer<Void> _recorder = nullptr;
+  // Recordings whose native ids live in _recorder.
+  final Set<FfiRecording> _live = {};
   bool _available = false;
   bool _probed = false;
 
@@ -262,6 +264,12 @@ class FfiBackend extends CaptureBackend {
 
   @override
   Future<void> dispose() async {
+    // Live recordings would keep polling a freed recorder (or, after a later
+    // initialize(), a new one whose ids collide with theirs), so stop them
+    // first. Each keeps what it captured for stop()/pcm.
+    for (final recording in _live.toList()) {
+      await recording.stop();
+    }
     if (_recorder != nullptr) {
       _bindings!.recorderFree(_recorder);
       _recorder = nullptr;
@@ -294,6 +302,7 @@ class FfiRecording implements Recording {
       channels: ch > 0 ? ch : requested.channels,
     );
     _state = RecordingState.recording;
+    _backend._live.add(this);
     // 16384 samples is generous headroom over the ~2205 samples produced per
     // 50 ms at 44.1 kHz mono; _drain reads repeatedly when more is queued.
     _buf = malloc<Int16>(_readCap);
@@ -394,6 +403,7 @@ class FfiRecording implements Recording {
     _b.recordingFree(_recorder, _id);
     _id = 0;
     malloc.free(_buf);
+    _backend._live.remove(this);
   }
 
   @override

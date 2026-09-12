@@ -147,6 +147,31 @@ void main() {
       await recording.dispose();
     });
 
+    test('disposing the backend stops its live recordings', () async {
+      final backend = FfiBackend();
+      Microphone.registerBackend(backend, makeActive: true);
+      final recording = await Microphone.record();
+      var closed = false;
+      recording.frames.listen(null, onDone: () => closed = true);
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      await backend.dispose();
+      expect(recording.state, RecordingState.stopped);
+      expect(closed, isTrue);
+      final captured = recording.pcm.length;
+      expect(captured, greaterThan(0));
+
+      // Reusing the backend starts a fresh recorder whose recording ids
+      // restart; the old handle must not pick up the new capture.
+      await backend.initialize();
+      final next = await backend.startRecording();
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(recording.pcm.length, captured);
+      expect(next.pcm, isNotEmpty);
+      await next.dispose();
+      await recording.dispose();
+      await backend.dispose();
+    });
+
     test('dispose is idempotent and stop-after-dispose is safe', () async {
       Microphone.registerBackend(FfiBackend(), makeActive: true);
       final recording = await Microphone.record();
