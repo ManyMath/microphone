@@ -373,7 +373,7 @@ class FfiRecording implements Recording {
   /// Ends the recording after a native capture error, surfacing [message] on
   /// [frames].
   void _fail(String message) {
-    _stopPolling();
+    _release();
     _state = RecordingState.stopped;
     if (!_frames.isClosed) {
       _frames.addError(CaptureException(message));
@@ -384,6 +384,16 @@ class FfiRecording implements Recording {
   void _stopPolling() {
     _poll?.cancel();
     _poll = null;
+  }
+
+  /// Stops polling and frees the native recording and the read buffer, which
+  /// closes the platform capture. Safe to call more than once.
+  void _release() {
+    _stopPolling();
+    if (_id == 0) return;
+    _b.recordingFree(_recorder, _id);
+    _id = 0;
+    malloc.free(_buf);
   }
 
   @override
@@ -407,16 +417,18 @@ class FfiRecording implements Recording {
   @override
   Future<Uint8List> stop() async {
     if (_finalWav != null) return _finalWav!;
-    if (_state == RecordingState.disposed) {
-      return _finalWav = wavFromPcm(_pcm.toBytes(), _format);
+    if (_state != RecordingState.disposed) {
+      if (_id != 0) {
+        _b.stop(_recorder, _id);
+        // Final drain of anything captured since the last poll.
+        _drain();
+      }
+      // microphone_stop only marks the recording stopped; the device keeps
+      // capturing (and buffering natively) until the recording is freed, so
+      // free it now rather than waiting for dispose().
+      _release();
+      _state = RecordingState.stopped;
     }
-    _stopPolling();
-    if (_id != 0) {
-      _b.stop(_recorder, _id);
-      // Final drain of anything captured since the last poll.
-      _drain();
-    }
-    _state = RecordingState.stopped;
     if (!_frames.isClosed) await _frames.close();
     return _finalWav = wavFromPcm(_pcm.toBytes(), _format);
   }
@@ -430,14 +442,7 @@ class FfiRecording implements Recording {
 
   @override
   Future<void> dispose() async {
-    _stopPolling();
-    if (_id != 0) {
-      _b.recordingFree(_recorder, _id);
-      _id = 0;
-    }
-    if (_state != RecordingState.disposed) {
-      malloc.free(_buf);
-    }
+    _release();
     _state = RecordingState.disposed;
     if (!_frames.isClosed) await _frames.close();
   }
