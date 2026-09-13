@@ -306,11 +306,9 @@ class MixingRecording implements Recording {
   @override
   Future<Uint8List> stop() async {
     if (_finalWav != null) return _finalWav!;
-    if (_state != RecordingState.disposed) _state = RecordingState.stopped;
-    for (final s in _subs) {
-      await s.cancel();
-    }
-    _subs.clear();
+    // Stop the children while still subscribed: a child's stop() can deliver
+    // a last chunk (the FFI backend's final drain), which still belongs in the
+    // mix.
     for (final c in _children) {
       try {
         await c.stop();
@@ -318,6 +316,11 @@ class MixingRecording implements Recording {
         // A child that fails to stop should not block the others.
       }
     }
+    if (_state != RecordingState.disposed) _state = RecordingState.stopped;
+    for (final s in _subs) {
+      await s.cancel();
+    }
+    _subs.clear();
     if (!_frames.isClosed) await _frames.close();
     return _finalWav = wavFromPcm(_pcm.toBytes(), _format);
   }

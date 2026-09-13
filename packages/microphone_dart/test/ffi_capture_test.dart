@@ -147,6 +147,26 @@ void main() {
       await recording.dispose();
     });
 
+    test('a mix keeps the microphone audio drained on stop', () async {
+      const format = CaptureFormat(sampleRate: 48000, channels: 1);
+      final mixing = MixingCaptureBackend([
+        FfiBackend(),
+        SilentBackend(),
+      ], format: format);
+      Microphone.registerBackend(mixing, makeActive: true);
+      final recording = await Microphone.record();
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      // Leave the capture to the final drain in stop().
+      final busy = Stopwatch()..start();
+      while (busy.elapsedMilliseconds < 600) {}
+      await recording.stop();
+      expect(
+        recording.duration,
+        greaterThan(const Duration(milliseconds: 600)),
+      );
+      await recording.dispose();
+    });
+
     test('frames events hold whole frames', () async {
       Microphone.registerBackend(FfiBackend(), makeActive: true);
       // Three channels do not divide the read buffer evenly; block the event
