@@ -305,7 +305,9 @@ class FfiRecording implements Recording {
     _backend._live.add(this);
     // 16384 samples is generous headroom over the ~2205 samples produced per
     // 50 ms at 44.1 kHz mono; _drain reads repeatedly when more is queued.
-    _buf = malloc<Int16>(_readCap);
+    // Reads are whole frames so no frames event splits one across channels.
+    _readSamples = _readCap - _readCap % _format.channels;
+    _buf = malloc<Int16>(_readSamples);
     _poll = Timer.periodic(const Duration(milliseconds: 50), (_) => _drain());
   }
 
@@ -320,6 +322,7 @@ class FfiRecording implements Recording {
       StreamController<Uint8List>.broadcast();
 
   int _id = 0;
+  late final int _readSamples;
   late final Pointer<Int16> _buf;
   Timer? _poll;
   RecordingState _state = RecordingState.idle;
@@ -359,7 +362,7 @@ class FfiRecording implements Recording {
     // More than one buffer's worth can be queued when a poll runs late (a busy
     // isolate) and on the final drain in stop(), so read until it runs dry.
     while (true) {
-      final n = _b.read(_recorder, _id, _buf, _readCap);
+      final n = _b.read(_recorder, _id, _buf, _readSamples);
       if (n < 0) {
         // The native error message is thread-local, and by the next poll the
         // isolate may be running on another OS thread, so fetch it right away.
@@ -375,7 +378,7 @@ class FfiRecording implements Recording {
       _pcmBytes += bytes.length;
       if (_retainPcm) _pcm.add(bytes);
       if (!_frames.isClosed) _frames.add(bytes);
-      if (n < _readCap) return;
+      if (n < _readSamples) return;
     }
   }
 

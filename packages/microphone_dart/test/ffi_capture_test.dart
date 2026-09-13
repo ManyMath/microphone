@@ -147,6 +147,24 @@ void main() {
       await recording.dispose();
     });
 
+    test('frames events hold whole frames', () async {
+      Microphone.registerBackend(FfiBackend(), makeActive: true);
+      // Three channels do not divide the read buffer evenly; block the event
+      // loop so the backlog spans several full reads.
+      final recording = await Microphone.record(
+        format: const CaptureFormat(sampleRate: 48000, channels: 3),
+      );
+      final sizes = <int>[];
+      recording.frames.listen((c) => sizes.add(c.length));
+      final busy = Stopwatch()..start();
+      while (busy.elapsedMilliseconds < 500) {}
+      await recording.stop();
+      expect(sizes, isNotEmpty);
+      final bytesPerFrame = recording.format.bytesPerFrame;
+      expect(sizes.where((n) => n % bytesPerFrame != 0), isEmpty);
+      await recording.dispose();
+    });
+
     test('disposing the backend stops its live recordings', () async {
       final backend = FfiBackend();
       Microphone.registerBackend(backend, makeActive: true);
