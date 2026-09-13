@@ -239,6 +239,22 @@ void main() {
       await other.close();
     });
 
+    test(
+      'a source that fails to start does not leave the others running',
+      () async {
+        final mic = SilentBackend();
+        final mixing = MixingCaptureBackend([
+          mic,
+          _FailingBackend(),
+        ], format: _fmt);
+        await expectLater(
+          mixing.startRecording(),
+          throwsA(isA<CaptureException>()),
+        );
+        expect(mic.started.single.state, RecordingState.disposed);
+      },
+    );
+
     test('mixes through the Microphone registry like any backend', () async {
       final primary = StreamController<Uint8List>();
       final other = StreamController<Uint8List>();
@@ -260,4 +276,14 @@ void main() {
       await other.close();
     });
   });
+}
+
+/// A source whose recordings never start.
+class _FailingBackend extends SilentBackend {
+  @override
+  Future<Recording> startRecording({
+    CaptureFormat format = const CaptureFormat(),
+    String? deviceId,
+    bool retainPcm = true,
+  }) async => throw const CaptureException('no device');
 }
