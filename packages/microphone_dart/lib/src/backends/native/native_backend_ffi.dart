@@ -214,8 +214,8 @@ class FfiBackend extends CaptureBackend {
 
   // The OS gates microphone access at capture time (e.g. the macOS TCC prompt
   // on first use); there is no portable pure-Dart permission API, so report
-  // true and let capture surface a denial. Flutter layers a real permission
-  // check on top via microphone_flutter.
+  // true and let capture surface a denial. microphone_flutter does not add a
+  // check either: on Android the app must request RECORD_AUDIO itself.
   @override
   Future<bool> hasPermission() async => true;
 

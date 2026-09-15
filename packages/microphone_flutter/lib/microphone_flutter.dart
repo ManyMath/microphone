@@ -27,8 +27,10 @@
 /// - **Android**: add `<uses-permission android:name="android.permission.RECORD_AUDIO"/>`
 ///   to `AndroidManifest.xml`.
 ///
-/// The OS shows its permission prompt the first time capture starts. The web
-/// backend prompts via getUserMedia.
+/// On macOS and iOS the OS shows its permission prompt the first time capture
+/// starts; the web backend prompts via getUserMedia. On native platforms
+/// [Microphone.requestPermission] does not prompt, so on Android request
+/// `RECORD_AUDIO` at runtime yourself before recording.
 library;
 
 import 'package:microphone_dart/microphone_dart.dart';

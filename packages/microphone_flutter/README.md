@@ -29,8 +29,11 @@ The microphone is a protected resource; declare it in your app:
 - **Android**: add `<uses-permission android:name="android.permission.RECORD_AUDIO"/>`
   to `AndroidManifest.xml`.
 
-The OS prompts on first capture; the web backend prompts via getUserMedia. See
-the example app for working configuration.
+On macOS and iOS the OS prompts on first capture; the web backend prompts via
+getUserMedia. On native platforms `Microphone.requestPermission()` does not
+prompt and always returns true, so on **Android** request `RECORD_AUDIO` at
+runtime yourself (e.g. with a permissions plugin) before recording. See the
+example app for the platform configuration.
 
 ## Precompiled binaries
 
