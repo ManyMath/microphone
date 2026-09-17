@@ -37,15 +37,7 @@ example app for the platform configuration.
 
 ## Precompiled binaries
 
-Building requires Rust (`rustup`). To remove even that for consumers, the repo
-is set up for cargokit precompiled binaries:
-
-- `native/microphone/cargokit.yaml` holds the public signing key and the
-  release URL prefix.
-- A release workflow builds and uploads signed binaries to
-  `precompiled_<crate-hash>` releases on tag pushes. It needs a
-  `CARGOKIT_PRIVATE_KEY` repository secret: the hex private key printed by
-  `dart run build_tool gen-key` (keep it secret; never commit it).
-
-Once a release exists, consuming builds download the matching signed binary
-instead of invoking cargo; with none present, cargokit builds from source.
+Building requires Rust (`rustup`). cargokit can download signed precompiled
+binaries instead of invoking cargo, but this repo does not publish them yet
+(there is no `native/microphone/cargokit.yaml` or release workflow), so every
+build compiles the crate from source.
