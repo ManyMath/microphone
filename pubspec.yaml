@@ -43,6 +43,9 @@ melos:
       run: >-
         dart test packages/microphone_dart &&
         flutter test packages/microphone_flutter/test
+    test:web:
+      description: Run the web backend tests in headless Chrome.
+      run: cd packages/microphone_dart && dart test -p chrome
     native:build:
       description: Build the microphone shared library (for CLI/dev use).
       run: cargo build --manifest-path native/microphone/Cargo.toml

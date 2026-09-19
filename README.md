@@ -35,5 +35,6 @@ dart run melos run native:build   # build the Rust shared library
 dart run melos run analyze        # analyze microphone_dart + microphone_flutter
 dart run melos run format         # check Dart formatting (format:fix to apply)
 dart run melos run test           # Dart + Flutter tests
+dart run melos run test:web       # web backend in headless Chrome
 dart run melos run native:test    # Rust crate tests
 ```
