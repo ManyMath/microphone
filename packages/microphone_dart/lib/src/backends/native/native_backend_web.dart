@@ -104,10 +104,14 @@ class WebCaptureBackend extends CaptureBackend {
 
   static Future<web.MediaStream> _getUserMedia(String? deviceId) async {
     final devices = web.window.navigator.mediaDevices;
-    // Pin a specific input when asked; otherwise accept the default.
-    final JSAny audio = deviceId == null
+    // Pin a specific input when asked; otherwise accept the default. A bare
+    // deviceId is only an "ideal" constraint, which lets the browser fall back
+    // to another input when that one is gone, so require it exactly.
+    final JSAny audio = deviceId == null || deviceId.isEmpty
         ? true.toJS
-        : web.MediaTrackConstraints(deviceId: deviceId.toJS);
+        : web.MediaTrackConstraints(
+            deviceId: web.ConstrainDOMStringParameters(exact: deviceId.toJS),
+          );
     final constraints = web.MediaStreamConstraints(audio: audio);
     return devices.getUserMedia(constraints).toDart;
   }

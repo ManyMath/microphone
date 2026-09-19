@@ -41,6 +41,13 @@ void main() {
     await recording.dispose();
   });
 
+  test('an unknown deviceId fails rather than using another input', () async {
+    await expectLater(
+      Microphone.record(deviceId: 'no-such-device'),
+      throwsA(isA<MicrophoneException>()),
+    );
+  });
+
   test('lists audio inputs', () async {
     expect(await Microphone.requestPermission(), isTrue);
     final devices = await Microphone.devices();
