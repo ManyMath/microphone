@@ -1,8 +1,11 @@
 @TestOn('browser')
 library;
 
+import 'dart:js_interop';
+
 import 'package:microphone_dart/microphone_dart.dart';
 import 'package:test/test.dart';
+import 'package:web/web.dart' as web;
 
 // Runs against Chrome's fake capture device (see dart_test.yaml):
 //   dart test -p chrome
@@ -39,6 +42,21 @@ void main() {
     expect(recording.pcm.length, greaterThan(atPause));
     await recording.stop();
     await recording.dispose();
+  });
+
+  test('stop then dispose tears down cleanly', () async {
+    var rejections = 0;
+    final onRejection = ((web.Event _) => rejections++).toJS;
+    web.window.addEventListener('unhandledrejection', onRejection);
+    addTearDown(
+      () => web.window.removeEventListener('unhandledrejection', onRejection),
+    );
+    final recording = await Microphone.record();
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    await recording.stop();
+    await recording.dispose();
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    expect(rejections, 0);
   });
 
   test('an unknown deviceId fails rather than using another input', () async {

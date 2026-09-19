@@ -175,6 +175,7 @@ class WebRecording implements Recording {
       StreamController<Uint8List>.broadcast();
   RecordingState _state = RecordingState.idle;
   Uint8List? _finalWav;
+  bool _tornDown = false;
 
   @override
   RecordingState get state => _state;
@@ -253,6 +254,10 @@ class WebRecording implements Recording {
   }
 
   void _teardown() {
+    // stop() then dispose() both get here; closing an already-closed context
+    // rejects, so only tear down once.
+    if (_tornDown) return;
+    _tornDown = true;
     try {
       _processor.onaudioprocess = null;
       _source.disconnect();
@@ -260,7 +265,8 @@ class WebRecording implements Recording {
       for (final track in WebCaptureBackend._tracks(_stream)) {
         track.stop();
       }
-      _context.close();
+      // Best-effort: a rejection here has nothing left to clean up.
+      _context.close().toDart.ignore();
     } on Object {
       // Best-effort cleanup; the recording is already final.
     }
@@ -268,9 +274,7 @@ class WebRecording implements Recording {
 
   @override
   Future<void> dispose() async {
-    if (_state != RecordingState.disposed) {
-      _teardown();
-    }
+    _teardown();
     _state = RecordingState.disposed;
     if (!_frames.isClosed) await _frames.close();
   }
