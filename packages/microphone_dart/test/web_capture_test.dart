@@ -44,7 +44,13 @@ void main() {
   test('an unknown deviceId fails rather than using another input', () async {
     await expectLater(
       Microphone.record(deviceId: 'no-such-device'),
-      throwsA(isA<MicrophoneException>()),
+      throwsA(
+        isA<CaptureException>().having(
+          (e) => e.message,
+          'message',
+          contains('OverconstrainedError'),
+        ),
+      ),
     );
   });
 

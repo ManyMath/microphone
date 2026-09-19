@@ -92,11 +92,33 @@ class WebCaptureBackend extends CaptureBackend {
     try {
       stream = await _getUserMedia(deviceId);
     } on Object catch (e) {
-      throw PermissionDeniedException(
-        'getUserMedia failed (permission denied or no microphone): $e',
-      );
+      throw _captureError(e);
     }
     return WebRecording._(stream, retainPcm: retainPcm);
+  }
+
+  /// Maps a getUserMedia failure to the matching package exception: only a
+  /// refusal is a [PermissionDeniedException]; a missing, busy or unknown
+  /// device is a [CaptureException].
+  static MicrophoneException _captureError(Object error) {
+    if (!web.window.isSecureContext) {
+      return const CaptureException(
+        'Microphone capture needs a secure context (HTTPS or localhost).',
+      );
+    }
+    String? name;
+    try {
+      final o = error as JSObject;
+      if (o.isA<web.DOMException>()) name = (o as web.DOMException).name;
+    } on Object {
+      // A Dart error (e.g. NullRejectionException), not a DOMException.
+    }
+    return switch (name) {
+      'NotAllowedError' || 'SecurityError' => PermissionDeniedException(
+        'Microphone access was denied: $error',
+      ),
+      _ => CaptureException('getUserMedia failed: $error'),
+    };
   }
 
   @override
