@@ -2,6 +2,7 @@
 library;
 
 import 'dart:js_interop';
+import 'dart:js_interop_unsafe';
 
 import 'package:microphone_dart/microphone_dart.dart';
 import 'package:test/test.dart';
@@ -57,6 +58,31 @@ void main() {
     await recording.dispose();
     await Future<void>.delayed(const Duration(milliseconds: 200));
     expect(rejections, 0);
+  });
+
+  test('a Web Audio setup failure releases the microphone', () async {
+    // Capture the stream getUserMedia opens, then make AudioContext throw.
+    final mediaDevices = web.window.navigator.mediaDevices as JSObject;
+    final getUserMedia = mediaDevices['getUserMedia'] as JSFunction;
+    web.MediaStream? opened;
+    mediaDevices['getUserMedia'] = ((JSAny? constraints) {
+      final promise =
+          getUserMedia.callAsFunction(mediaDevices, constraints)
+              as JSPromise<web.MediaStream>;
+      return promise.toDart.then((stream) => opened = stream).toJS;
+    }).toJS;
+    final audioContext = globalContext['AudioContext'];
+    JSObject failingAudioContext() => throw StateError('no audio');
+    globalContext['AudioContext'] = failingAudioContext.toJS;
+    addTearDown(() {
+      mediaDevices.delete('getUserMedia'.toJS);
+      globalContext['AudioContext'] = audioContext;
+    });
+
+    await expectLater(Microphone.record(), throwsA(isA<CaptureException>()));
+    final tracks = opened!.getTracks().toDart;
+    expect(tracks, isNotEmpty);
+    expect(tracks.every((t) => t.readyState == 'ended'), isTrue);
   });
 
   test('an unknown deviceId fails rather than using another input', () async {

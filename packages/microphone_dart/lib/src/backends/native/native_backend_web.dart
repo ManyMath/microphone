@@ -94,7 +94,15 @@ class WebCaptureBackend extends CaptureBackend {
     } on Object catch (e) {
       throw _captureError(e);
     }
-    return WebRecording._(stream, retainPcm: retainPcm);
+    try {
+      return WebRecording._(stream, retainPcm: retainPcm);
+    } on Object catch (e) {
+      // The device is already open; nothing else will release it.
+      for (final track in _tracks(stream)) {
+        track.stop();
+      }
+      throw CaptureException('Web Audio setup failed: $e');
+    }
   }
 
   /// Maps a getUserMedia failure to the matching package exception: only a
@@ -149,16 +157,21 @@ class WebRecording implements Recording {
   WebRecording._(this._stream, {bool retainPcm = true})
     : _retainPcm = retainPcm {
     _context = web.AudioContext();
-    final rate = _context.sampleRate.round();
-    _format = CaptureFormat(sampleRate: rate, channels: 1);
-    _source = _context.createMediaStreamSource(_stream);
-    // 4096-frame buffer, mono in/out. Output stays silent (we never fill it),
-    // so connecting to destination -- required for onaudioprocess to fire in
-    // some browsers -- does not echo the mic.
-    _processor = _context.createScriptProcessor(4096, 1, 1);
-    _processor.onaudioprocess = _onAudio.toJS;
-    _source.connect(_processor);
-    _processor.connect(_context.destination);
+    try {
+      final rate = _context.sampleRate.round();
+      _format = CaptureFormat(sampleRate: rate, channels: 1);
+      _source = _context.createMediaStreamSource(_stream);
+      // 4096-frame buffer, mono in/out. Output stays silent (we never fill
+      // it), so connecting to destination -- required for onaudioprocess to
+      // fire in some browsers -- does not echo the mic.
+      _processor = _context.createScriptProcessor(4096, 1, 1);
+      _processor.onaudioprocess = _onAudio.toJS;
+      _source.connect(_processor);
+      _processor.connect(_context.destination);
+    } on Object {
+      _context.close().toDart.ignore();
+      rethrow;
+    }
     _state = RecordingState.recording;
   }
 
