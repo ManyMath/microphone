@@ -61,28 +61,37 @@ void main() {
   });
 
   test('a Web Audio setup failure releases the microphone', () async {
-    // Capture the stream getUserMedia opens, then make AudioContext throw.
-    final mediaDevices = web.window.navigator.mediaDevices as JSObject;
-    final getUserMedia = mediaDevices['getUserMedia'] as JSFunction;
-    web.MediaStream? opened;
-    mediaDevices['getUserMedia'] = ((JSAny? constraints) {
-      final promise =
-          getUserMedia.callAsFunction(mediaDevices, constraints)
-              as JSPromise<web.MediaStream>;
-      return promise.toDart.then((stream) => opened = stream).toJS;
-    }).toJS;
+    final opened = _spyOnGetUserMedia();
     final audioContext = globalContext['AudioContext'];
     JSObject failingAudioContext() => throw StateError('no audio');
     globalContext['AudioContext'] = failingAudioContext.toJS;
-    addTearDown(() {
-      mediaDevices.delete('getUserMedia'.toJS);
-      globalContext['AudioContext'] = audioContext;
-    });
+    addTearDown(() => globalContext['AudioContext'] = audioContext);
 
     await expectLater(Microphone.record(), throwsA(isA<CaptureException>()));
-    final tracks = opened!.getTracks().toDart;
+    final tracks = opened.single.getTracks().toDart;
     expect(tracks, isNotEmpty);
     expect(tracks.every((t) => t.readyState == 'ended'), isTrue);
+  });
+
+  test('a track that ends on its own ends the recording', () async {
+    final opened = _spyOnGetUserMedia();
+    final recording = await Microphone.record();
+    Object? error;
+    var closed = false;
+    recording.frames.listen(
+      null,
+      onError: (Object e) => error = e,
+      onDone: () => closed = true,
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    // What the browser does when the input is unplugged or access revoked.
+    opened.single.getTracks().toDart.first.dispatchEvent(web.Event('ended'));
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(error, isA<CaptureException>());
+    expect(closed, isTrue);
+    expect(recording.state, RecordingState.stopped);
+    expect((await recording.stop()).length, greaterThan(44));
+    await recording.dispose();
   });
 
   test('an unknown deviceId fails rather than using another input', () async {
@@ -104,4 +113,22 @@ void main() {
     expect(devices, isNotEmpty);
     expect(devices.every((d) => d.id.isNotEmpty), isTrue);
   });
+}
+
+/// Records every stream getUserMedia hands out for the rest of the test.
+List<web.MediaStream> _spyOnGetUserMedia() {
+  final mediaDevices = web.window.navigator.mediaDevices as JSObject;
+  final getUserMedia = mediaDevices['getUserMedia'] as JSFunction;
+  final opened = <web.MediaStream>[];
+  mediaDevices['getUserMedia'] = ((JSAny? constraints) {
+    final promise =
+        getUserMedia.callAsFunction(mediaDevices, constraints)
+            as JSPromise<web.MediaStream>;
+    return promise.toDart.then((stream) {
+      opened.add(stream);
+      return stream;
+    }).toJS;
+  }).toJS;
+  addTearDown(() => mediaDevices.delete('getUserMedia'.toJS));
+  return opened;
 }

@@ -168,6 +168,11 @@ class WebRecording implements Recording {
       _processor.onaudioprocess = _onAudio.toJS;
       _source.connect(_processor);
       _processor.connect(_context.destination);
+      // The browser ends a track itself when the input is unplugged or access
+      // is revoked; without this the recording would just go quiet.
+      for (final track in WebCaptureBackend._tracks(_stream)) {
+        track.onended = _onTrackEnded.toJS;
+      }
     } on Object {
       _context.close().toDart.ignore();
       rethrow;
@@ -232,6 +237,22 @@ class WebRecording implements Recording {
     if (!_frames.isClosed) _frames.add(out);
   }
 
+  void _onTrackEnded(web.Event _) {
+    if (_state != RecordingState.recording && _state != RecordingState.paused) {
+      return;
+    }
+    _teardown();
+    _state = RecordingState.stopped;
+    if (!_frames.isClosed) {
+      _frames.addError(
+        const CaptureException(
+          'The microphone track ended (input removed or access revoked).',
+        ),
+      );
+      _frames.close();
+    }
+  }
+
   @override
   Future<void> pause() async {
     if (_state == RecordingState.recording) {
@@ -276,6 +297,7 @@ class WebRecording implements Recording {
       _source.disconnect();
       _processor.disconnect();
       for (final track in WebCaptureBackend._tracks(_stream)) {
+        track.onended = null;
         track.stop();
       }
       // Best-effort: a rejection here has nothing left to clean up.
