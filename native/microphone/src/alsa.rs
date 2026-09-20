@@ -12,11 +12,12 @@
 
 use std::os::raw::{c_char, c_int, c_long, c_uint, c_ulong, c_void};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread::JoinHandle;
 
 use libloading::Library;
 
+use crate::queue::SampleQueue;
 use crate::PcmSource;
 
 // ALSA error codes and constants.
@@ -143,7 +144,7 @@ unsafe impl Send for PcmPtr {}
 /// An open ALSA input stream feeding captured S16 frames into a shared buffer.
 pub struct AlsaCapture {
     alsa: Arc<Alsa>,
-    samples: Arc<Mutex<Vec<i16>>>,
+    samples: Arc<SampleQueue>,
     stop: Arc<AtomicBool>,
     reader: Option<JoinHandle<()>>,
     channels: u32,
@@ -234,7 +235,7 @@ impl AlsaCapture {
                 return Err(format!("snd_pcm_start: {}", alsa.str_error(rc)));
             }
 
-            let samples = Arc::new(Mutex::new(Vec::new()));
+            let samples = Arc::new(SampleQueue::default());
             let stop = Arc::new(AtomicBool::new(false));
             let reader = Self::spawn_reader(
                 alsa.clone(),
@@ -256,7 +257,7 @@ impl AlsaCapture {
     fn spawn_reader(
         alsa: Arc<Alsa>,
         pcm: PcmPtr,
-        samples: Arc<Mutex<Vec<i16>>>,
+        samples: Arc<SampleQueue>,
         stop: Arc<AtomicBool>,
         channels: u32,
     ) -> JoinHandle<()> {
@@ -277,11 +278,11 @@ impl AlsaCapture {
                 };
                 if n > 0 {
                     let count = (n as usize) * (channels as usize);
-                    if let Ok(mut s) = samples.lock() {
-                        s.extend_from_slice(&buf[..count]);
-                    }
+                    samples.push(&buf[..count]);
                 } else if n < 0 {
-                    // Negative is an error code; stop reading.
+                    // Negative is an error code; capture is over. Report it
+                    // through PcmSource::read rather than reading as silence.
+                    samples.fail(format!("snd_pcm_readi: {}", alsa.str_error(n as c_int)));
                     break;
                 }
                 // n == 0 means no data available; loop and retry.
@@ -296,16 +297,7 @@ impl AlsaCapture {
 
 impl PcmSource for AlsaCapture {
     fn read(&self, max: usize) -> Result<Vec<i16>, String> {
-        let mut samples = self.samples.lock().map_err(|e| e.to_string())?;
-        if samples.is_empty() || max == 0 {
-            return Ok(Vec::new());
-        }
-        if samples.len() <= max {
-            return Ok(std::mem::take(&mut *samples));
-        }
-        let rest = samples.split_off(max);
-        let out = std::mem::replace(&mut *samples, rest);
-        Ok(out)
+        self.samples.read(max)
     }
 
     fn channels(&self) -> u32 {

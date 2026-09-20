@@ -12,11 +12,12 @@
 
 use std::os::raw::{c_char, c_int, c_void};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread::JoinHandle;
 
 use libloading::Library;
 
+use crate::queue::SampleQueue;
 use crate::PcmSource;
 
 // Stable AAudio ABI constants.
@@ -108,7 +109,7 @@ unsafe impl Send for StreamPtr {}
 /// An open AAudio input stream feeding captured S16 frames into a shared buffer.
 pub struct AaudioCapture {
     aaudio: Arc<Aaudio>,
-    samples: Arc<Mutex<Vec<i16>>>,
+    samples: Arc<SampleQueue>,
     stop: Arc<AtomicBool>,
     reader: Option<JoinHandle<()>>,
     channels: u32,
@@ -148,7 +149,7 @@ impl AaudioCapture {
                 return Err(format!("requestStart: {}", aaudio.result_text(rc)));
             }
 
-            let samples = Arc::new(Mutex::new(Vec::new()));
+            let samples = Arc::new(SampleQueue::default());
             let stop = Arc::new(AtomicBool::new(false));
             let reader = Self::spawn_reader(
                 aaudio.clone(),
@@ -170,7 +171,7 @@ impl AaudioCapture {
     fn spawn_reader(
         aaudio: Arc<Aaudio>,
         stream: StreamPtr,
-        samples: Arc<Mutex<Vec<i16>>>,
+        samples: Arc<SampleQueue>,
         stop: Arc<AtomicBool>,
         channels: u32,
     ) -> JoinHandle<()> {
@@ -192,11 +193,12 @@ impl AaudioCapture {
                 };
                 if n > 0 {
                     let count = n as usize * channels as usize;
-                    if let Ok(mut s) = samples.lock() {
-                        s.extend_from_slice(&buf[..count]);
-                    }
+                    samples.push(&buf[..count]);
                 } else if n < 0 {
-                    // Negative is an error code; stop reading.
+                    // Negative is an error code (e.g. AAUDIO_ERROR_DISCONNECTED
+                    // when the input route changes). Capture is over; report
+                    // it through PcmSource::read rather than reading as silence.
+                    samples.fail(format!("AAudioStream_read: {}", aaudio.result_text(n)));
                     break;
                 }
                 // n == 0 means timeout with no data; loop and check stop.
@@ -211,16 +213,7 @@ impl AaudioCapture {
 
 impl PcmSource for AaudioCapture {
     fn read(&self, max: usize) -> Result<Vec<i16>, String> {
-        let mut samples = self.samples.lock().map_err(|e| e.to_string())?;
-        if samples.is_empty() || max == 0 {
-            return Ok(Vec::new());
-        }
-        if samples.len() <= max {
-            return Ok(std::mem::take(&mut *samples));
-        }
-        let rest = samples.split_off(max);
-        let out = std::mem::replace(&mut *samples, rest);
-        Ok(out)
+        self.samples.read(max)
     }
 
     fn channels(&self) -> u32 {

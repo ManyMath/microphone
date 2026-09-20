@@ -26,6 +26,9 @@ mod winmm;
 #[cfg(target_os = "linux")]
 mod alsa;
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
+mod queue;
+
 /// A platform audio input that yields interleaved S16LE frames on demand.
 pub(crate) trait PcmSource: Send + Sync {
     /// Drains and returns up to `max` of the samples captured since the last
