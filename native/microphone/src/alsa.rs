@@ -24,6 +24,9 @@ use crate::PcmSource;
 const SND_PCM_STREAM_CAPTURE: c_uint = 1;
 const SND_PCM_FORMAT_S16_LE: c_int = 2;
 const SND_PCM_ACCESS_RW_INTERLEAVED: c_uint = 3;
+const EAGAIN: c_int = 11;
+// How long the reader waits for input before rechecking its stop flag.
+const WAIT_MS: c_int = 20;
 
 type PcmT = c_void;
 type PcmHwParamsT = c_void;
@@ -49,6 +52,8 @@ type FnPcmStart = unsafe extern "C" fn(*mut PcmT) -> c_int;
 type FnPcmDrop = unsafe extern "C" fn(*mut PcmT) -> c_int;
 type FnPcmReadi = unsafe extern "C" fn(*mut PcmT, *mut c_void, c_ulong) -> c_long;
 type FnPcmRecover = unsafe extern "C" fn(*mut PcmT, c_int, c_int) -> c_int;
+type FnPcmNonblock = unsafe extern "C" fn(*mut PcmT, c_int) -> c_int;
+type FnPcmWait = unsafe extern "C" fn(*mut PcmT, c_int) -> c_int;
 type FnStrError = unsafe extern "C" fn(c_int) -> *const c_char;
 
 /// Resolved entry points into `libasound.so.2`.
@@ -69,6 +74,8 @@ pub struct Alsa {
     pcm_drop: FnPcmDrop,
     pcm_readi: FnPcmReadi,
     pcm_recover: FnPcmRecover,
+    pcm_nonblock: FnPcmNonblock,
+    pcm_wait: FnPcmWait,
     str_error: FnStrError,
 }
 
@@ -104,6 +111,8 @@ impl Alsa {
             let pcm_drop = sym!(b"snd_pcm_drop\0");
             let pcm_readi = sym!(b"snd_pcm_readi\0");
             let pcm_recover = sym!(b"snd_pcm_recover\0");
+            let pcm_nonblock = sym!(b"snd_pcm_nonblock\0");
+            let pcm_wait = sym!(b"snd_pcm_wait\0");
             let str_error = sym!(b"snd_strerror\0");
 
             let alsa = Alsa {
@@ -122,6 +131,8 @@ impl Alsa {
                 pcm_drop,
                 pcm_readi,
                 pcm_recover,
+                pcm_nonblock,
+                pcm_wait,
                 str_error,
                 _lib: lib,
             };
@@ -239,6 +250,13 @@ impl AlsaCapture {
                 return Err(format!("snd_pcm_start: {}", alsa.str_error(rc)));
             }
 
+            // Read without blocking (see spawn_reader).
+            let rc = (alsa.pcm_nonblock)(pcm, 1);
+            if rc < 0 {
+                (alsa.pcm_close)(pcm);
+                return Err(format!("snd_pcm_nonblock: {}", alsa.str_error(rc)));
+            }
+
             let samples = Arc::new(SampleQueue::default());
             let stop = Arc::new(AtomicBool::new(false));
             let reader = Self::spawn_reader(
@@ -272,7 +290,15 @@ impl AlsaCapture {
             // as needed and is drained by PcmSource::read.
             let frames_per_read: usize = 1024;
             let mut buf = vec![0i16; frames_per_read * channels as usize];
+            // A blocking readi only returns at a period boundary, which the
+            // sound server may set hundreds of milliseconds apart; Drop joins
+            // this thread, so that stalled stopping a recording. Wait in short
+            // slices instead and read whatever has arrived.
             while !stop.load(Ordering::SeqCst) {
+                let rc = unsafe { (alsa.pcm_wait)(pcm.0, WAIT_MS) };
+                if rc == 0 {
+                    continue; // timed out; recheck the stop flag
+                }
                 let n = unsafe {
                     (alsa.pcm_readi)(
                         pcm.0,
@@ -280,9 +306,12 @@ impl AlsaCapture {
                         frames_per_read as c_ulong,
                     )
                 };
+                // A failed wait is reported by the read that follows it.
                 if n > 0 {
                     let count = (n as usize) * (channels as usize);
                     samples.push(&buf[..count]);
+                } else if n == -(EAGAIN as c_long) {
+                    continue; // nothing ready after all
                 } else if n < 0 {
                     // Negative is an error code. An overrun (-EPIPE) or a
                     // suspend (-ESTRPIPE) is recoverable, at the cost of a
@@ -294,7 +323,6 @@ impl AlsaCapture {
                         break;
                     }
                 }
-                // n == 0 means no data available; loop and retry.
             }
             unsafe {
                 let _ = (alsa.pcm_drop)(pcm.0);
