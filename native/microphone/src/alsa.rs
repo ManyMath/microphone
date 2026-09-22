@@ -169,7 +169,7 @@ impl AlsaCapture {
     pub fn open(alsa: &Arc<Alsa>, channels: u32, rate: u32) -> Result<Self, String> {
         unsafe {
             // Open the default ALSA PCM input device (usually "default").
-            let device = std::ffi::CStr::from_bytes_with_nul(b"default\0").unwrap();
+            let device = c"default";
             let mut pcm: *mut PcmT = std::ptr::null_mut();
             let rc = (alsa.pcm_open)(
                 &mut pcm,
