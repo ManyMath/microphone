@@ -48,6 +48,7 @@ type FnPcmPrepare = unsafe extern "C" fn(*mut PcmT) -> c_int;
 type FnPcmStart = unsafe extern "C" fn(*mut PcmT) -> c_int;
 type FnPcmDrop = unsafe extern "C" fn(*mut PcmT) -> c_int;
 type FnPcmReadi = unsafe extern "C" fn(*mut PcmT, *mut c_void, c_ulong) -> c_long;
+type FnPcmRecover = unsafe extern "C" fn(*mut PcmT, c_int, c_int) -> c_int;
 type FnStrError = unsafe extern "C" fn(c_int) -> *const c_char;
 
 /// Resolved entry points into `libasound.so.2`.
@@ -67,6 +68,7 @@ pub struct Alsa {
     pcm_start: FnPcmStart,
     pcm_drop: FnPcmDrop,
     pcm_readi: FnPcmReadi,
+    pcm_recover: FnPcmRecover,
     str_error: FnStrError,
 }
 
@@ -101,6 +103,7 @@ impl Alsa {
             let pcm_start = sym!(b"snd_pcm_start\0");
             let pcm_drop = sym!(b"snd_pcm_drop\0");
             let pcm_readi = sym!(b"snd_pcm_readi\0");
+            let pcm_recover = sym!(b"snd_pcm_recover\0");
             let str_error = sym!(b"snd_strerror\0");
 
             let alsa = Alsa {
@@ -118,6 +121,7 @@ impl Alsa {
                 pcm_start,
                 pcm_drop,
                 pcm_readi,
+                pcm_recover,
                 str_error,
                 _lib: lib,
             };
@@ -280,10 +284,15 @@ impl AlsaCapture {
                     let count = (n as usize) * (channels as usize);
                     samples.push(&buf[..count]);
                 } else if n < 0 {
-                    // Negative is an error code; capture is over. Report it
-                    // through PcmSource::read rather than reading as silence.
-                    samples.fail(format!("snd_pcm_readi: {}", alsa.str_error(n as c_int)));
-                    break;
+                    // Negative is an error code. An overrun (-EPIPE) or a
+                    // suspend (-ESTRPIPE) is recoverable, at the cost of a
+                    // gap; anything else ends capture and is reported through
+                    // PcmSource::read rather than reading as silence.
+                    let err = n as c_int;
+                    if unsafe { (alsa.pcm_recover)(pcm.0, err, 1) } < 0 {
+                        samples.fail(format!("snd_pcm_readi: {}", alsa.str_error(err)));
+                        break;
+                    }
                 }
                 // n == 0 means no data available; loop and retry.
             }
