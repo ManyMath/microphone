@@ -30,18 +30,12 @@ const WAIT_MS: c_int = 20;
 
 type PcmT = c_void;
 type PcmHwParamsT = c_void;
-type FnPcmOpen = unsafe extern "C" fn(
-    *mut *mut PcmT,
-    *const c_char,
-    c_uint,
-    c_int,
-) -> c_int;
+type FnPcmOpen = unsafe extern "C" fn(*mut *mut PcmT, *const c_char, c_uint, c_int) -> c_int;
 type FnPcmClose = unsafe extern "C" fn(*mut PcmT) -> c_int;
 type FnPcmHwParamsMalloc = unsafe extern "C" fn(*mut *mut PcmHwParamsT) -> c_int;
 type FnPcmHwParamsFree = unsafe extern "C" fn(*mut PcmHwParamsT) -> c_int;
 type FnPcmHwParamsAny = unsafe extern "C" fn(*mut PcmT, *mut PcmHwParamsT) -> c_int;
-type FnPcmHwParamsSetAccess =
-    unsafe extern "C" fn(*mut PcmT, *mut PcmHwParamsT, c_uint) -> c_int;
+type FnPcmHwParamsSetAccess = unsafe extern "C" fn(*mut PcmT, *mut PcmHwParamsT, c_uint) -> c_int;
 type FnPcmHwParamsSetFormat = unsafe extern "C" fn(*mut PcmT, *mut PcmHwParamsT, c_int) -> c_int;
 type FnPcmHwParamsSetChannels = unsafe extern "C" fn(*mut PcmT, *mut PcmHwParamsT, c_uint) -> c_int;
 type FnPcmHwParamsSetRate =
@@ -171,12 +165,7 @@ impl AlsaCapture {
             // Open the default ALSA PCM input device (usually "default").
             let device = c"default";
             let mut pcm: *mut PcmT = std::ptr::null_mut();
-            let rc = (alsa.pcm_open)(
-                &mut pcm,
-                device.as_ptr(),
-                SND_PCM_STREAM_CAPTURE,
-                0,
-            );
+            let rc = (alsa.pcm_open)(&mut pcm, device.as_ptr(), SND_PCM_STREAM_CAPTURE, 0);
             if rc < 0 {
                 return Err(format!("snd_pcm_open: {}", alsa.str_error(rc)));
             }
@@ -204,28 +193,40 @@ impl AlsaCapture {
             if rc < 0 {
                 (alsa.pcm_hw_params_free)(hw_params);
                 (alsa.pcm_close)(pcm);
-                return Err(format!("snd_pcm_hw_params_set_access: {}", alsa.str_error(rc)));
+                return Err(format!(
+                    "snd_pcm_hw_params_set_access: {}",
+                    alsa.str_error(rc)
+                ));
             }
 
             let rc = (alsa.pcm_hw_params_set_format)(pcm, hw_params, SND_PCM_FORMAT_S16_LE);
             if rc < 0 {
                 (alsa.pcm_hw_params_free)(hw_params);
                 (alsa.pcm_close)(pcm);
-                return Err(format!("snd_pcm_hw_params_set_format: {}", alsa.str_error(rc)));
+                return Err(format!(
+                    "snd_pcm_hw_params_set_format: {}",
+                    alsa.str_error(rc)
+                ));
             }
 
             let rc = (alsa.pcm_hw_params_set_channels)(pcm, hw_params, channels as c_uint);
             if rc < 0 {
                 (alsa.pcm_hw_params_free)(hw_params);
                 (alsa.pcm_close)(pcm);
-                return Err(format!("snd_pcm_hw_params_set_channels: {}", alsa.str_error(rc)));
+                return Err(format!(
+                    "snd_pcm_hw_params_set_channels: {}",
+                    alsa.str_error(rc)
+                ));
             }
 
             let rc = (alsa.pcm_hw_params_set_rate)(pcm, hw_params, rate as c_uint, 0);
             if rc < 0 {
                 (alsa.pcm_hw_params_free)(hw_params);
                 (alsa.pcm_close)(pcm);
-                return Err(format!("snd_pcm_hw_params_set_rate: {}", alsa.str_error(rc)));
+                return Err(format!(
+                    "snd_pcm_hw_params_set_rate: {}",
+                    alsa.str_error(rc)
+                ));
             }
 
             let rc = (alsa.pcm_hw_params)(pcm, hw_params);

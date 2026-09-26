@@ -81,14 +81,8 @@ type WaveInProc =
 
 type FnGetNumDevs = unsafe extern "system" fn() -> u32;
 type FnGetDevCaps = unsafe extern "system" fn(usize, *mut WaveInCapsW, u32) -> u32;
-type FnOpen = unsafe extern "system" fn(
-    *mut HWaveIn,
-    u32,
-    *const WaveFormatEx,
-    usize,
-    usize,
-    u32,
-) -> u32;
+type FnOpen =
+    unsafe extern "system" fn(*mut HWaveIn, u32, *const WaveFormatEx, usize, usize, u32) -> u32;
 type FnHdrOp = unsafe extern "system" fn(HWaveIn, *mut WaveHdr, u32) -> u32;
 type FnStreamOp = unsafe extern "system" fn(HWaveIn) -> u32;
 type FnGetErrorText = unsafe extern "system" fn(u32, *mut u16, u32) -> u32;
