@@ -5,13 +5,14 @@
 Pod::Spec.new do |s|
   s.name             = 'microphone_flutter'
   s.version          = '0.0.1'
-  s.summary          = 'A new Flutter FFI plugin project.'
+  s.summary          = 'Microphone recording for Flutter.'
   s.description      = <<-DESC
-A new Flutter FFI plugin project.
+Microphone capture for Flutter: builds the native microphone Rust library and
+exposes it to Dart over FFI.
                        DESC
-  s.homepage         = 'http://example.com'
+  s.homepage         = 'https://github.com/ManyMath/microphone'
   s.license          = { :file => '../LICENSE' }
-  s.author           = { 'Your Company' => 'email@example.com' }
+  s.author           = { 'ManyMath' => 'https://github.com/ManyMath' }
 
   s.source           = { :path => '.' }
   s.source_files     = 'Classes/**/*'
