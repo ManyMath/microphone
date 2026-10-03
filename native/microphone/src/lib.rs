@@ -330,8 +330,8 @@ pub unsafe extern "C" fn microphone_read(
     }
 }
 
-/// Returns the recording state (0 recording, 1 stopped, 2 error), or -1 if the
-/// id is unknown.
+/// Returns the recording state (0 recording, 1 stopped, 2 error, 3 paused), or
+/// -1 if the id is unknown.
 #[no_mangle]
 pub extern "C" fn microphone_state(recorder: *mut Recorder, id: u64) -> c_int {
     let Some(recorder) = with_recorder(recorder) else {
@@ -403,7 +403,9 @@ pub extern "C" fn microphone_resume(recorder: *mut Recorder, id: u64) -> c_int {
     }
 }
 
-/// Stops a recording. Returns 0 on success, -1 if the id is unknown.
+/// Marks a recording stopped. The platform capture keeps running, and audio
+/// stays readable, until [microphone_recording_free] releases it: drain with
+/// [microphone_read], then free. Returns 0 on success, -1 if the id is unknown.
 #[no_mangle]
 pub extern "C" fn microphone_stop(recorder: *mut Recorder, id: u64) -> c_int {
     let Some(recorder) = with_recorder(recorder) else {
