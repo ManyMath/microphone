@@ -606,7 +606,8 @@ mod macos {
         if rc != NO_ERR || (size as usize) < std::mem::size_of::<u32>() {
             return false;
         }
-        let mut buf = vec![0u8; size as usize];
+        // u64 storage keeps the AudioBufferList's 8-byte-aligned fields aligned.
+        let mut buf = vec![0u64; (size as usize).div_ceil(8)];
         let rc = (hal.get_data)(
             device,
             &addr,
@@ -615,16 +616,18 @@ mod macos {
             &mut size,
             buf.as_mut_ptr() as *mut c_void,
         );
-        if rc != NO_ERR {
+        if rc != NO_ERR || (size as usize) < std::mem::size_of::<u32>() {
             return false;
         }
-        // Walk the AudioBufferList and sum input channels across buffers.
-        let header = &*(buf.as_ptr() as *const AudioBufferListHeader);
-        let count = header.number_buffers as usize;
-        if count == 0 {
+        // Walk the AudioBufferList and sum input channels across buffers,
+        // reading no further than the HAL actually wrote.
+        let base = buf.as_ptr() as *const u8;
+        let count = *(base as *const u32) as usize;
+        let first = std::mem::offset_of!(AudioBufferListHeader, first);
+        if count == 0 || (size as usize) < first + count * std::mem::size_of::<AudioBuffer>() {
             return false;
         }
-        let buffers = std::slice::from_raw_parts(&header.first as *const AudioBuffer, count);
+        let buffers = std::slice::from_raw_parts(base.add(first) as *const AudioBuffer, count);
         let total: u32 = buffers.iter().map(|b| b.number_channels).sum();
         total > 0
     }
