@@ -24,6 +24,8 @@ use crate::{DeviceInfo, PcmSource};
 
 // MMRESULT success.
 const MMSYSERR_NOERROR: u32 = 0;
+// The header is still queued with the device (WAVERR_BASE + 1).
+const WAVERR_STILLPLAYING: u32 = 33;
 // LPWAVEFORMATEX format tag for uncompressed PCM.
 const WAVE_FORMAT_PCM: u16 = 1;
 // waveInOpen: deliver completion notifications by calling our function pointer.
@@ -312,7 +314,17 @@ impl WinmmCapture {
         // drains them) so the headers can be unprepared.
         (winmm.reset)(hwi);
         for hdr in headers.iter_mut() {
-            (winmm.unprepare)(hwi, &mut **hdr, hdr_size);
+            // A callback that read `closing` just before it was set can still
+            // re-queue its buffer after the reset. Its header then refuses to
+            // unprepare, and waveInClose would fail too, leaving the device
+            // open; reset again until it comes back. (Re-queueing a header
+            // that is already unprepared just fails.)
+            for _ in 0..10 {
+                if (winmm.unprepare)(hwi, &mut **hdr, hdr_size) != WAVERR_STILLPLAYING {
+                    break;
+                }
+                (winmm.reset)(hwi);
+            }
         }
         (winmm.close)(hwi);
         headers.clear();
@@ -346,8 +358,9 @@ unsafe extern "system" fn input_cb(
         }
     }
     // Recycle the buffer so the device keeps capturing -- unless we are tearing
-    // down, in which case the queue must drain. waveInAddBuffer is one of the
-    // few functions documented as safe to call from this callback.
+    // down, in which case the queue must drain. (waveInProc's documentation
+    // does not list waveInAddBuffer among the calls allowed here, though it is
+    // the common pattern; teardown copes with the late re-queue this allows.)
     if !sink.closing.load(Ordering::SeqCst) {
         (sink.add_buffer)(hwi, hdr, std::mem::size_of::<WaveHdr>() as u32);
     }
