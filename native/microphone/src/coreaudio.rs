@@ -243,7 +243,13 @@ impl CoreAudioCapture {
                     (ca.dispose)(queue, 1);
                     return Err(format!("AudioQueueAllocateBuffer: {rc}"));
                 }
-                (ca.enqueue)(queue, buf, 0, std::ptr::null());
+                // An unqueued buffer is never filled; with none queued the
+                // recording would start fine and capture nothing.
+                let rc = (ca.enqueue)(queue, buf, 0, std::ptr::null());
+                if rc != 0 {
+                    (ca.dispose)(queue, 1);
+                    return Err(format!("AudioQueueEnqueueBuffer: {rc}"));
+                }
                 buffers.push(buf);
             }
             let rc = (ca.start)(queue, std::ptr::null_mut());
