@@ -9,6 +9,9 @@
   keeps open-ended live recordings from accumulating PCM without bound.
 - A backend pinned with `makeActive` / `useBackend` now survives later
   registrations.
+- Linux: `Microphone.devices()` lists ALSA capture devices (`default` first,
+  then each card's input PCMs), and `record(deviceId: ...)` captures from the
+  selected one.
 - FFI backend fixes:
   - `stop()` no longer drops audio queued while the isolate was busy (only the
     first 16384 samples of the backlog were kept).
