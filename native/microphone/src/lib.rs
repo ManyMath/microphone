@@ -160,9 +160,8 @@ impl Recorder {
         rate: u32,
         device_id: Option<&str>,
     ) -> Result<Box<dyn PcmSource>, String> {
-        // Linux ALSA device selection is not wired yet; uses default.
-        let _ = device_id;
-        let cap = alsa::AlsaCapture::open(&self.alsa, channels, rate)?;
+        // device_id, when set, is an ALSA PCM name; null opens "default".
+        let cap = alsa::AlsaCapture::open(&self.alsa, channels, rate, device_id)?;
         Ok(Box::new(cap))
     }
 

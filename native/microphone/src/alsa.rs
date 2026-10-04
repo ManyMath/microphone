@@ -10,6 +10,7 @@
 //! `PcmSource::read` drains, so the device is serviced promptly regardless of how
 //! often Dart polls.
 
+use std::ffi::CString;
 use std::os::raw::{c_char, c_int, c_long, c_uint, c_ulong, c_void};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -160,14 +161,21 @@ pub struct AlsaCapture {
 }
 
 impl AlsaCapture {
-    pub fn open(alsa: &Arc<Alsa>, channels: u32, rate: u32) -> Result<Self, String> {
+    /// Opens `device_id` (an ALSA PCM name such as `plughw:CARD=Audio,DEV=0`),
+    /// or `default` -- normally the sound server -- when it is `None`.
+    pub fn open(
+        alsa: &Arc<Alsa>,
+        channels: u32,
+        rate: u32,
+        device_id: Option<&str>,
+    ) -> Result<Self, String> {
+        let name = device_id.unwrap_or("default");
+        let device = CString::new(name).map_err(|e| e.to_string())?;
         unsafe {
-            // Open the default ALSA PCM input device (usually "default").
-            let device = c"default";
             let mut pcm: *mut PcmT = std::ptr::null_mut();
             let rc = (alsa.pcm_open)(&mut pcm, device.as_ptr(), SND_PCM_STREAM_CAPTURE, 0);
             if rc < 0 {
-                return Err(format!("snd_pcm_open: {}", alsa.str_error(rc)));
+                return Err(format!("snd_pcm_open({name}): {}", alsa.str_error(rc)));
             }
 
             // Allocate and configure hardware parameters.
