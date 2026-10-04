@@ -79,7 +79,6 @@ struct Recording {
     paused: AtomicBool,
     rate: u32,
     channels: u32,
-    error: Mutex<Option<String>>,
 }
 
 /// Owns the audio backend and the table of live recordings.
@@ -193,7 +192,6 @@ impl Recorder {
             paused: AtomicBool::new(false),
             rate,
             channels: actual_channels,
-            error: Mutex::new(None),
         });
         self.recordings.lock().unwrap().insert(id, recording);
         Ok(id)
@@ -322,7 +320,6 @@ pub unsafe extern "C" fn microphone_read(
             n as isize
         }
         Err(e) => {
-            *recording.error.lock().unwrap() = Some(e.clone());
             recording.state.store(STATE_ERROR, Ordering::SeqCst);
             set_last_error(e);
             -1
