@@ -10,7 +10,7 @@
 //! `PcmSource::read` drains, so the device is serviced promptly regardless of how
 //! often Dart polls.
 
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_long, c_uint, c_ulong, c_void};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -19,7 +19,7 @@ use std::thread::JoinHandle;
 use libloading::Library;
 
 use crate::queue::SampleQueue;
-use crate::PcmSource;
+use crate::{DeviceInfo, PcmSource};
 
 // ALSA error codes and constants.
 const SND_PCM_STREAM_CAPTURE: c_uint = 1;
@@ -50,6 +50,14 @@ type FnPcmRecover = unsafe extern "C" fn(*mut PcmT, c_int, c_int) -> c_int;
 type FnPcmNonblock = unsafe extern "C" fn(*mut PcmT, c_int) -> c_int;
 type FnPcmWait = unsafe extern "C" fn(*mut PcmT, c_int) -> c_int;
 type FnStrError = unsafe extern "C" fn(c_int) -> *const c_char;
+type FnDeviceNameHint = unsafe extern "C" fn(c_int, *const c_char, *mut *mut *mut c_void) -> c_int;
+type FnDeviceNameGetHint = unsafe extern "C" fn(*const c_void, *const c_char) -> *mut c_char;
+type FnDeviceNameFreeHint = unsafe extern "C" fn(*mut *mut c_void) -> c_int;
+
+extern "C" {
+    // snd_device_name_get_hint returns malloc'd strings the caller frees.
+    fn free(ptr: *mut c_void);
+}
 
 /// Resolved entry points into `libasound.so.2`.
 pub struct Alsa {
@@ -72,6 +80,9 @@ pub struct Alsa {
     pcm_nonblock: FnPcmNonblock,
     pcm_wait: FnPcmWait,
     str_error: FnStrError,
+    device_name_hint: FnDeviceNameHint,
+    device_name_get_hint: FnDeviceNameGetHint,
+    device_name_free_hint: FnDeviceNameFreeHint,
 }
 
 unsafe impl Send for Alsa {}
@@ -109,6 +120,9 @@ impl Alsa {
             let pcm_nonblock = sym!(b"snd_pcm_nonblock\0");
             let pcm_wait = sym!(b"snd_pcm_wait\0");
             let str_error = sym!(b"snd_strerror\0");
+            let device_name_hint = sym!(b"snd_device_name_hint\0");
+            let device_name_get_hint = sym!(b"snd_device_name_get_hint\0");
+            let device_name_free_hint = sym!(b"snd_device_name_free_hint\0");
 
             let alsa = Alsa {
                 pcm_open,
@@ -129,6 +143,9 @@ impl Alsa {
                 pcm_nonblock,
                 pcm_wait,
                 str_error,
+                device_name_hint,
+                device_name_get_hint,
+                device_name_free_hint,
                 _lib: lib,
             };
             Ok(alsa)
@@ -141,8 +158,19 @@ impl Alsa {
             if ptr.is_null() {
                 return format!("ALSA error {err}");
             }
-            std::ffi::CStr::from_ptr(ptr).to_string_lossy().into_owned()
+            CStr::from_ptr(ptr).to_string_lossy().into_owned()
         }
+    }
+
+    /// Reads one field (`NAME`, `DESC`, `IOID`) of a device-name hint.
+    unsafe fn hint_field(&self, hint: *const c_void, field: &CStr) -> Option<String> {
+        let ptr = (self.device_name_get_hint)(hint, field.as_ptr());
+        if ptr.is_null() {
+            return None;
+        }
+        let value = CStr::from_ptr(ptr).to_string_lossy().into_owned();
+        free(ptr as *mut c_void);
+        Some(value)
     }
 }
 
@@ -359,5 +387,99 @@ impl Drop for AlsaCapture {
         }
         // The reader thread stops/closes the PCM before exiting.
         let _ = &self.alsa;
+    }
+}
+
+/// Lists ALSA capture devices: `default` (normally the sound server) first,
+/// then each sound card's input-capable PCMs. The ids are ALSA PCM names, which
+/// [`AlsaCapture::open`] accepts. Returns just `default` if the hints are
+/// unavailable, and nothing if libasound cannot be loaded.
+pub fn enumerate_input_devices() -> Vec<DeviceInfo> {
+    let Ok(alsa) = Alsa::load() else {
+        return Vec::new();
+    };
+    let mut out = vec![DeviceInfo {
+        id: "default".into(),
+        name: "Default".into(),
+        is_default: true,
+    }];
+    unsafe {
+        let mut hints: *mut *mut c_void = std::ptr::null_mut();
+        if (alsa.device_name_hint)(-1, c"pcm".as_ptr(), &mut hints) < 0 || hints.is_null() {
+            return out;
+        }
+        let mut i = 0;
+        loop {
+            let hint = *hints.add(i);
+            if hint.is_null() {
+                break;
+            }
+            i += 1;
+            let Some(name) = alsa.hint_field(hint, c"NAME") else {
+                continue;
+            };
+            let ioid = alsa.hint_field(hint, c"IOID");
+            if !is_card_input(&name, ioid.as_deref()) {
+                continue;
+            }
+            let label = match alsa.hint_field(hint, c"DESC") {
+                Some(desc) => one_line(&desc),
+                None => name.clone(),
+            };
+            out.push(DeviceInfo {
+                id: name,
+                name: label,
+                is_default: false,
+            });
+        }
+        (alsa.device_name_free_hint)(hints);
+    }
+    out
+}
+
+/// Whether a hinted PCM is one of a sound card's capture routes. Global plugins
+/// (rate converters, sound-server shims, `null`) are skipped -- `default`
+/// already reaches the sound server -- as are route kinds that only play but
+/// do not say so in IOID.
+fn is_card_input(name: &str, ioid: Option<&str>) -> bool {
+    const OUTPUT_ONLY: [&str; 5] = ["surround", "dmix", "usbstream", "iec958", "hdmi"];
+    name.contains("CARD=")
+        && ioid != Some("Output")
+        && !OUTPUT_ONLY.iter().any(|kind| name.starts_with(kind))
+}
+
+/// Folds a hint's two-line DESC ("USB Audio, USB Audio\nDirect sample snooping
+/// device") into one display line.
+fn one_line(desc: &str) -> String {
+    let mut lines = desc.lines().map(str::trim).filter(|l| !l.is_empty());
+    match (lines.next(), lines.next()) {
+        (Some(card), Some(kind)) => format!("{card} ({kind})"),
+        (Some(card), None) => card.to_string(),
+        _ => desc.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_card_input, one_line};
+
+    #[test]
+    fn keeps_card_capture_routes_only() {
+        assert!(is_card_input("plughw:CARD=Audio,DEV=0", None));
+        assert!(is_card_input("dsnoop:CARD=Audio,DEV=0", Some("Input")));
+        assert!(!is_card_input("hdmi:CARD=NVidia,DEV=0", Some("Output")));
+        assert!(!is_card_input("surround51:CARD=PCH", None));
+        assert!(!is_card_input("usbstream:CARD=PCH", None));
+        assert!(!is_card_input("pipewire", None));
+        assert!(!is_card_input("null", None));
+    }
+
+    #[test]
+    fn folds_the_description_onto_one_line() {
+        assert_eq!(
+            one_line("USB Audio, USB Audio\nDirect sample snooping device"),
+            "USB Audio, USB Audio (Direct sample snooping device)"
+        );
+        assert_eq!(one_line("HDA Intel PCH"), "HDA Intel PCH");
     }
 }

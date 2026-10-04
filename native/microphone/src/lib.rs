@@ -446,8 +446,9 @@ pub(crate) struct DeviceInfo {
     pub is_default: bool,
 }
 
-/// Lists input devices for the current platform. macOS and Windows enumerate;
-/// other platforms return an empty list and capture uses the system default.
+/// Lists input devices for the current platform. macOS, Windows and Linux
+/// enumerate; other platforms return an empty list and capture uses the system
+/// default.
 fn enumerate_input_devices() -> Vec<DeviceInfo> {
     #[cfg(target_os = "macos")]
     {
@@ -457,7 +458,11 @@ fn enumerate_input_devices() -> Vec<DeviceInfo> {
     {
         winmm::enumerate_input_devices()
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(target_os = "linux")]
+    {
+        alsa::enumerate_input_devices()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
         Vec::new()
     }
