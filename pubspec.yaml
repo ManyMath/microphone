@@ -48,7 +48,7 @@ melos:
       run: cd packages/microphone_dart && dart test -p chrome
     native:build:
       description: Build the microphone shared library (for CLI/dev use).
-      run: cargo build --manifest-path native/microphone/Cargo.toml
+      run: cargo build --manifest-path packages/microphone_flutter/rust/Cargo.toml
     native:test:
       description: Run the Rust crate tests.
-      run: cargo test --manifest-path native/microphone/Cargo.toml
+      run: cargo test --manifest-path packages/microphone_flutter/rust/Cargo.toml

@@ -40,5 +40,5 @@ example app for the platform configuration.
 
 Building requires Rust (`rustup`). cargokit can download signed precompiled
 binaries instead of invoking cargo, but this repo does not publish them yet
-(there is no `native/microphone/cargokit.yaml` or release workflow), so every
+(there is no `rust/cargokit.yaml` or release workflow), so every
 build compiles the crate from source.

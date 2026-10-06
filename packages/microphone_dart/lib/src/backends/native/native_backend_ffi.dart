@@ -16,7 +16,7 @@ import '../../wav.dart';
 /// The default native backend on platforms with `dart:ffi`.
 CaptureBackend? createNativeBackend() => FfiBackend();
 
-// --- C ABI signatures, mirroring native/microphone/src/lib.rs ----------------
+// --- C ABI signatures, mirroring microphone_flutter's rust/src/lib.rs -------
 
 typedef _RecorderNewNative = Pointer<Void> Function();
 typedef _RecorderFreeNative = Void Function(Pointer<Void>);
@@ -95,7 +95,7 @@ class NativeLibrary {
     var dir = Directory.current.absolute;
     for (var i = 0; i < 6; i++) {
       for (final profile in ['release', 'debug']) {
-        yield '${dir.path}/native/microphone/target/$profile/$_fileName';
+        yield '${dir.path}/packages/microphone_flutter/rust/target/$profile/$_fileName';
       }
       final parent = dir.parent;
       if (parent.path == dir.path) break;

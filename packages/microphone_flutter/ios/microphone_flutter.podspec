@@ -21,7 +21,7 @@ exposes it to Dart over FFI.
   # force-link it into the plugin framework.
   s.script_phase = {
     :name => 'Build microphone',
-    :script => 'sh "$PODS_TARGET_SRCROOT/../cargokit/build_pod.sh" ../../../native/microphone microphone',
+    :script => 'sh "$PODS_TARGET_SRCROOT/../cargokit/build_pod.sh" ../rust microphone',
     :execution_position => :before_compile,
     :input_files => ['${BUILT_PRODUCTS_DIR}/cargokit_phony'],
     :output_files => ['${BUILT_PRODUCTS_DIR}/libmicrophone.a'],

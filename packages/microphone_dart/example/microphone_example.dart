@@ -2,7 +2,7 @@
 // Flutter) and writes a WAV file.
 //
 // Build the native library first:
-//   cargo build --manifest-path native/microphone/Cargo.toml
+//   cargo build --manifest-path packages/microphone_flutter/rust/Cargo.toml
 // then, from the repo root:
 //   dart run packages/microphone_dart/example/microphone_example.dart
 //   dart run packages/microphone_dart/example/microphone_example.dart out.wav 5

@@ -10,7 +10,7 @@ This is a [melos](https://melos.invertase.dev) monorepo:
 |---|---|
 | [`packages/microphone_dart`](packages/microphone_dart) | Pure Dart (no Flutter); works in CLI tools. Reaches native microphone recording over `dart:ffi`. |
 | [`packages/microphone_flutter`](packages/microphone_flutter) | Flutter plugin. Builds the native library automatically (via cargokit) and re-exports the `microphone_dart` API. |
-| [`native/microphone`](native/microphone) | Rust crate. |
+| [`packages/microphone_flutter/rust`](packages/microphone_flutter/rust) | The `microphone` Rust crate (the native capture library). It lives inside the plugin so the published package can build it. |
 
 ## Status
 

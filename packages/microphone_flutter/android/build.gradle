@@ -48,13 +48,13 @@ android {
     }
 }
 
-// Build the shared `microphone` Rust crate via cargokit. The crate lives at the
-// repo root, shared with the pure-Dart `microphone_dart` package; cargokit
-// drops the per-ABI libmicrophone.so into jniLibs so it is packaged in the
-// APK and resolvable by DynamicLibrary.open('libmicrophone.so').
+// Build the `microphone` Rust crate (in this package's rust/ directory, so it
+// ships with the published plugin) via cargokit, which drops the per-ABI
+// libmicrophone.so into jniLibs so it is packaged in the APK and resolvable by
+// DynamicLibrary.open('libmicrophone.so').
 apply from: "../cargokit/gradle/plugin.gradle"
 
 cargokit {
-    manifestDir = "../../../native/microphone"
+    manifestDir = "../rust"
     libname = "microphone"
 }
