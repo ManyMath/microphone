@@ -43,8 +43,11 @@ android {
     }
 
     defaultConfig {
-        // AAudio (used by microphone for input capture) requires API 26+.
-        minSdk = 26
+        // Capture uses AAudio (API 26+), but the native library loads it at
+        // runtime, so nothing here needs 26 to build. Matching Flutter's own
+        // default lets apps build without raising their minSdk; on older
+        // devices recording fails with a CaptureException instead.
+        minSdk = 24
     }
 }
 

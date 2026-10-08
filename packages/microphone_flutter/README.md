@@ -27,8 +27,9 @@ The microphone is a protected resource; declare it in your app:
   also enable the audio-input entitlement
   (`com.apple.security.device.audio-input`) for sandboxed apps.
 - **Android**: add `<uses-permission android:name="android.permission.RECORD_AUDIO"/>`
-  to `AndroidManifest.xml`. Capture uses AAudio, so the plugin needs API 26+:
-  set `minSdk = 26` (or higher) in your app's `build.gradle`.
+  to `AndroidManifest.xml`. Capture uses AAudio, available from Android 8.0
+  (API 26); the plugin builds with Flutter's default `minSdk`, and on older
+  devices recording fails with a `CaptureException`.
 
 On macOS and iOS the OS prompts on first capture; the web backend prompts via
 getUserMedia. On native platforms `Microphone.requestPermission()` does not
