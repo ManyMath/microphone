@@ -210,6 +210,47 @@ void main() {
       await backend.dispose();
     });
 
+    test('permission is not gated on this host', () async {
+      final backend = FfiBackend();
+      expect(await backend.hasPermission(), isTrue);
+      expect(await backend.requestPermission(), isTrue);
+    });
+
+    group('with NativePermission hooks', () {
+      tearDown(() {
+        NativePermission.check = null;
+        NativePermission.request = null;
+      });
+
+      test('record asks first and fails when refused', () async {
+        var asked = 0;
+        NativePermission.check = () async => false;
+        NativePermission.request = () async {
+          asked++;
+          return false;
+        };
+        Microphone.registerBackend(FfiBackend(), makeActive: true);
+        expect(await Microphone.hasPermission(), isFalse);
+        await expectLater(
+          Microphone.record(),
+          throwsA(isA<PermissionDeniedException>()),
+        );
+        expect(asked, 1);
+      });
+
+      test('record proceeds once the request is granted', () async {
+        var granted = false;
+        NativePermission.check = () async => granted;
+        NativePermission.request = () async => granted = true;
+        Microphone.registerBackend(FfiBackend(), makeActive: true);
+        final recording = await Microphone.record();
+        expect(granted, isTrue);
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        expect((await recording.stop()).length, greaterThan(44));
+        await recording.dispose();
+      });
+    });
+
     test('dispose is idempotent and stop-after-dispose is safe', () async {
       Microphone.registerBackend(FfiBackend(), makeActive: true);
       final recording = await Microphone.record();

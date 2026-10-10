@@ -10,6 +10,7 @@ import '../../capture_device.dart';
 import '../../capture_format.dart';
 import '../../exceptions.dart';
 import '../../file_writer.dart';
+import '../../native_permission.dart';
 import '../../recording.dart';
 import '../../wav.dart';
 
@@ -37,6 +38,14 @@ typedef _DeviceFieldNative = Int32 Function(Int32, Pointer<Utf8>, Size);
 typedef _DeviceField = int Function(int, Pointer<Utf8>, int);
 typedef _DeviceIsDefaultNative = Int32 Function(Int32);
 typedef _DeviceIsDefault = int Function(int);
+typedef _PermissionNative = Int32 Function();
+typedef _Permission = int Function();
+
+// microphone_permission_status codes.
+const int _permissionNotApplicable = 0;
+const int _permissionUndetermined = 1;
+const int _permissionDenied = 2;
+const int _permissionGranted = 3;
 
 /// Locates and opens the `microphone` shared library.
 class NativeLibrary {
@@ -144,7 +153,18 @@ class _Bindings {
       deviceIsDefault = lib
           .lookupFunction<_DeviceIsDefaultNative, _DeviceIsDefault>(
             'microphone_device_is_default',
-          );
+          ),
+      permissionStatus = _optional(lib, 'microphone_permission_status'),
+      requestPermission = _optional(lib, 'microphone_request_permission');
+
+  // The permission calls arrived with ABI 2; an older library just lacks them.
+  static _Permission? _optional(DynamicLibrary lib, String symbol) {
+    try {
+      return lib.lookupFunction<_PermissionNative, _Permission>(symbol);
+    } on ArgumentError {
+      return null;
+    }
+  }
 
   final Pointer<Void> Function() recorderNew;
   final _RecorderFree recorderFree;
@@ -161,6 +181,8 @@ class _Bindings {
   final _DeviceField deviceId;
   final _DeviceField deviceName;
   final _DeviceIsDefault deviceIsDefault;
+  final _Permission? permissionStatus;
+  final _Permission? requestPermission;
 }
 
 /// Captures audio by calling the native `microphone` library over FFI.
@@ -212,15 +234,36 @@ class FfiBackend extends CaptureBackend {
     return ptr == nullptr ? 'unknown error' : ptr.toDartString();
   }
 
-  // The OS gates microphone access at capture time (e.g. the macOS TCC prompt
-  // on first use); there is no portable pure-Dart permission API, so report
-  // true and let capture surface a denial. microphone_flutter does not add a
-  // check either: on Android the app must request RECORD_AUDIO itself.
+  // macOS and iOS answer through the native library; Android through the
+  // NativePermission hooks microphone_flutter installs. Linux and Windows do
+  // not gate capture, so the native answer there is "not applicable".
   @override
-  Future<bool> hasPermission() async => true;
+  Future<bool> hasPermission() async {
+    final check = NativePermission.check;
+    if (check != null) return check();
+    final status = _permissionStatus();
+    return status == _permissionGranted || status == _permissionNotApplicable;
+  }
 
   @override
-  Future<bool> requestPermission() async => true;
+  Future<bool> requestPermission() async {
+    final request = NativePermission.request;
+    if (request != null) return request();
+    final ask = isAvailable ? _bindings!.requestPermission : null;
+    if (ask == null) return true;
+    var status = ask();
+    // The prompt is answered asynchronously; the native side only starts it.
+    while (status == _permissionUndetermined) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      status = _permissionStatus();
+    }
+    return status == _permissionGranted || status == _permissionNotApplicable;
+  }
+
+  int _permissionStatus() {
+    final status = isAvailable ? _bindings!.permissionStatus : null;
+    return status == null ? _permissionNotApplicable : status();
+  }
 
   @override
   Future<List<CaptureDevice>> devices() async {
@@ -259,6 +302,11 @@ class FfiBackend extends CaptureBackend {
     bool retainPcm = true,
   }) async {
     if (_recorder == nullptr) await initialize();
+    // Capturing without permission fails on Android and records silence on
+    // Apple platforms, so ask first, as CaptureBackend promises.
+    if (!await hasPermission() && !await requestPermission()) {
+      throw const PermissionDeniedException();
+    }
     return FfiRecording._(this, format, deviceId, retainPcm: retainPcm);
   }
 
@@ -293,7 +341,11 @@ class FfiRecording implements Recording {
       if (cId != nullptr) malloc.free(cId);
     }
     if (_id == 0) {
-      throw CaptureException('capture failed: ${_backend._lastError()}');
+      final message = 'capture failed: ${_backend._lastError()}';
+      if (_backend._permissionStatus() == _permissionDenied) {
+        throw PermissionDeniedException(message);
+      }
+      throw CaptureException(message);
     }
     final rate = _b.sampleRate(_recorder, _id);
     final ch = _b.channels(_recorder, _id);
