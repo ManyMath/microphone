@@ -33,6 +33,12 @@ flutter:
     platforms:
       android:
         ffiPlugin: true
+        # The Java side only handles the RECORD_AUDIO runtime permission;
+        # capture itself goes over FFI.
+        package: com.manymath.microphone_flutter
+        pluginClass: MicrophoneFlutterPlugin
+        dartPluginClass: MicrophoneFlutterAndroid
+        dartFileName: src/android_permission.dart
       ios:
         ffiPlugin: true
       linux:
