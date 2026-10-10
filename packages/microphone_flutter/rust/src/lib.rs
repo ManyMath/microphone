@@ -17,6 +17,9 @@ mod coreaudio;
 #[cfg(target_os = "ios")]
 mod ios_session;
 
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+mod permission;
+
 #[cfg(target_os = "android")]
 mod aaudio;
 
@@ -51,6 +54,16 @@ const STATE_RECORDING: u8 = 0;
 const STATE_STOPPED: u8 = 1;
 const STATE_ERROR: u8 = 2;
 const STATE_PAUSED: u8 = 3;
+
+// Microphone permission states (microphone_permission_status), mirrored by the
+// Dart side. Only Apple platforms report anything but "not applicable".
+const PERMISSION_NOT_APPLICABLE: c_int = 0;
+#[cfg_attr(not(any(target_os = "macos", target_os = "ios")), allow(dead_code))]
+const PERMISSION_UNDETERMINED: c_int = 1;
+#[cfg_attr(not(any(target_os = "macos", target_os = "ios")), allow(dead_code))]
+const PERMISSION_DENIED: c_int = 2;
+#[cfg_attr(not(any(target_os = "macos", target_os = "ios")), allow(dead_code))]
+const PERMISSION_GRANTED: c_int = 3;
 
 thread_local! {
     static LAST_ERROR: RefCell<CString> = RefCell::new(CString::default());
@@ -118,6 +131,10 @@ impl Recorder {
         rate: u32,
         device_id: Option<&str>,
     ) -> Result<Box<dyn PcmSource>, String> {
+        // A denied grant does not make AudioQueue fail; it records silence.
+        if permission::status() == PERMISSION_DENIED {
+            return Err("microphone access is denied (see the system privacy settings)".into());
+        }
         // iOS gates audio input behind an active AVAudioSession; macOS does not.
         #[cfg(target_os = "ios")]
         ios_session::activate()?;
@@ -208,7 +225,7 @@ impl Recorder {
 /// Returns the ABI version. Bumped when the C ABI changes.
 #[no_mangle]
 pub extern "C" fn microphone_abi_version() -> u32 {
-    1
+    2
 }
 
 /// Creates a recorder. Returns null on failure; see [microphone_last_error].
@@ -426,6 +443,38 @@ pub extern "C" fn microphone_recording_free(recorder: *mut Recorder, id: u64) ->
     match recorder.recordings.lock().unwrap().remove(&id) {
         Some(_) => 0,
         None => -1,
+    }
+}
+
+/// Returns the OS microphone permission state: 0 not applicable (the platform
+/// does not gate capture, or the state cannot be read), 1 not yet determined,
+/// 2 denied or restricted, 3 granted. Only macOS and iOS report states other
+/// than 0.
+#[no_mangle]
+pub extern "C" fn microphone_permission_status() -> c_int {
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    {
+        permission::status()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    {
+        PERMISSION_NOT_APPLICABLE
+    }
+}
+
+/// Shows the system microphone permission prompt if the state is not yet
+/// determined, and returns the state as [microphone_permission_status] would.
+/// It does not wait for the answer: poll [microphone_permission_status] until
+/// it stops returning 1.
+#[no_mangle]
+pub extern "C" fn microphone_request_permission() -> c_int {
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    {
+        permission::request()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    {
+        PERMISSION_NOT_APPLICABLE
     }
 }
 
