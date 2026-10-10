@@ -27,10 +27,10 @@
 /// - **Android**: add `<uses-permission android:name="android.permission.RECORD_AUDIO"/>`
 ///   to `AndroidManifest.xml`.
 ///
-/// On macOS and iOS the OS shows its permission prompt the first time capture
-/// starts; the web backend prompts via getUserMedia. On native platforms
-/// [Microphone.requestPermission] does not prompt, so on Android request
-/// `RECORD_AUDIO` at runtime yourself before recording.
+/// [Microphone.requestPermission] shows the system prompt on Android, iOS,
+/// macOS and the web, and [Microphone.record] asks first by itself when
+/// permission has not been granted, throwing [PermissionDeniedException] if the
+/// user refuses. Linux and Windows do not gate capture.
 library;
 
 import 'package:microphone_dart/microphone_dart.dart';
