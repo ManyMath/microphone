@@ -151,9 +151,9 @@ impl Recorder {
         rate: u32,
         device_id: Option<&str>,
     ) -> Result<Box<dyn PcmSource>, String> {
-        // AAudio input device selection (by id) is not wired yet; uses default.
-        let _ = device_id;
-        let cap = aaudio::AaudioCapture::open(&self.aaudio, channels, rate)?;
+        // device_id, when set, is an AudioDeviceInfo id (listed through
+        // microphone_flutter, since AAudio cannot enumerate devices).
+        let cap = aaudio::AaudioCapture::open(&self.aaudio, channels, rate, device_id)?;
         Ok(Box::new(cap))
     }
 

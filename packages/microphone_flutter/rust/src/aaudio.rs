@@ -45,11 +45,13 @@ pub struct Aaudio {
     builder_set_sample_rate: FnBuilderSetI32,
     builder_set_channel_count: FnBuilderSetI32,
     builder_set_format: FnBuilderSetI32,
+    builder_set_device_id: FnBuilderSetI32,
     builder_open: FnBuilderOpen,
     builder_delete: FnBuilderDelete,
     stream_start: FnStreamOp,
     stream_read: FnStreamRead,
     stream_get_channel_count: FnStreamGetI32,
+    stream_get_device_id: FnStreamGetI32,
     stream_stop: FnStreamOp,
     stream_close: FnStreamOp,
     result_text: FnResultText,
@@ -77,11 +79,13 @@ impl Aaudio {
                 builder_set_sample_rate: sym!(b"AAudioStreamBuilder_setSampleRate\0"),
                 builder_set_channel_count: sym!(b"AAudioStreamBuilder_setChannelCount\0"),
                 builder_set_format: sym!(b"AAudioStreamBuilder_setFormat\0"),
+                builder_set_device_id: sym!(b"AAudioStreamBuilder_setDeviceId\0"),
                 builder_open: sym!(b"AAudioStreamBuilder_openStream\0"),
                 builder_delete: sym!(b"AAudioStreamBuilder_delete\0"),
                 stream_start: sym!(b"AAudioStream_requestStart\0"),
                 stream_read: sym!(b"AAudioStream_read\0"),
                 stream_get_channel_count: sym!(b"AAudioStream_getChannelCount\0"),
+                stream_get_device_id: sym!(b"AAudioStream_getDeviceId\0"),
                 stream_stop: sym!(b"AAudioStream_requestStop\0"),
                 stream_close: sym!(b"AAudioStream_close\0"),
                 result_text: sym!(b"AAudio_convertResultToText\0"),
@@ -117,7 +121,22 @@ pub struct AaudioCapture {
 }
 
 impl AaudioCapture {
-    pub fn open(aaudio: &Arc<Aaudio>, channels: u32, rate: u32) -> Result<Self, String> {
+    /// Opens the input `device_id` names -- an `AudioDeviceInfo.getId()` as a
+    /// decimal string, as listed by microphone_flutter -- or the route Android
+    /// picks when it is `None` or `"default"`.
+    pub fn open(
+        aaudio: &Arc<Aaudio>,
+        channels: u32,
+        rate: u32,
+        device_id: Option<&str>,
+    ) -> Result<Self, String> {
+        let device = match device_id {
+            None | Some("default") => None,
+            Some(s) => Some(
+                s.parse::<c_int>()
+                    .map_err(|_| format!("invalid Android device id {s:?} (expected a number)"))?,
+            ),
+        };
         unsafe {
             let mut builder: *mut Builder = std::ptr::null_mut();
             let rc = (aaudio.create_builder)(&mut builder);
@@ -128,12 +147,25 @@ impl AaudioCapture {
             (aaudio.builder_set_sample_rate)(builder, rate as c_int);
             (aaudio.builder_set_channel_count)(builder, channels as c_int);
             (aaudio.builder_set_format)(builder, AAUDIO_FORMAT_PCM_I16);
+            if let Some(id) = device {
+                (aaudio.builder_set_device_id)(builder, id);
+            }
 
             let mut stream: *mut Stream = std::ptr::null_mut();
             let rc = (aaudio.builder_open)(builder, &mut stream);
             (aaudio.builder_delete)(builder);
             if rc != AAUDIO_OK {
                 return Err(format!("openStream: {}", aaudio.result_text(rc)));
+            }
+            // A device id is only a preference to AAudio: an unavailable one
+            // opens the default input instead. Recording from another input
+            // than the one asked for is worse than failing.
+            if let Some(id) = device {
+                let actual = (aaudio.stream_get_device_id)(stream);
+                if actual != id {
+                    (aaudio.stream_close)(stream);
+                    return Err(format!("input device {id} is not available"));
+                }
             }
             // The device may grant a different channel count than requested.
             let actual_channels = {
