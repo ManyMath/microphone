@@ -7,37 +7,38 @@
 //! install (the legacy Multimedia / `waveIn` API), so consumers need nothing
 //! extra.
 //!
-//! The `waveIn` API is callback-driven; `PcmSource` is pull-driven. We bridge
-//! them exactly like the CoreAudio path: the input callback appends each full
-//! buffer's S16 frames to a `Mutex<Vec<i16>>` and re-queues the buffer, and
-//! `read` drains whatever has accumulated.
+//! The device is opened with `CALLBACK_EVENT`: the driver signals an event as
+//! it fills each buffer, and a capture thread appends the buffer's S16 frames
+//! to a shared queue and hands the buffer back. `read` drains the queue.
 
 use std::os::raw::{c_char, c_void};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::thread::JoinHandle;
 
 use libloading::Library;
 
+use crate::queue::SampleQueue;
 use crate::{DeviceInfo, PcmSource};
 
 // --- Win32 multimedia ABI constants ----------------------------------------
 
 // MMRESULT success.
 const MMSYSERR_NOERROR: u32 = 0;
-// The header is still queued with the device (WAVERR_BASE + 1).
-const WAVERR_STILLPLAYING: u32 = 33;
 // LPWAVEFORMATEX format tag for uncompressed PCM.
 const WAVE_FORMAT_PCM: u16 = 1;
-// waveInOpen: deliver completion notifications by calling our function pointer.
-const CALLBACK_FUNCTION: u32 = 0x0003_0000;
+// waveInOpen: signal the event handle passed as dwCallback when a buffer is
+// returned.
+const CALLBACK_EVENT: u32 = 0x0005_0000;
 // waveInOpen device id meaning "let the system pick the preferred input".
 const WAVE_MAPPER: u32 = 0xFFFF_FFFF;
-// waveInProc message: a buffer has been filled and returned to us.
-const WIM_DATA: u32 = 0x03C0;
+// WAVEHDR::dwFlags: the driver has finished with the buffer.
+const WHDR_DONE: u32 = 0x0000_0001;
 // Max device-name length (in WCHARs) in WAVEINCAPSW::szPname.
 const MAXPNAMELEN: usize = 32;
 
 type HWaveIn = *mut c_void;
+type Handle = *mut c_void;
 
 // WAVEFORMATEX (we only ever describe integer PCM, so cbSize is 0).
 #[repr(C)]
@@ -77,10 +78,6 @@ struct WaveInCapsW {
     reserved1: u16,
 }
 
-// The waveIn completion callback. We only act on WIM_DATA.
-type WaveInProc =
-    unsafe extern "system" fn(HWaveIn, u32, dw_instance: usize, dw_param1: usize, dw_param2: usize);
-
 type FnGetNumDevs = unsafe extern "system" fn() -> u32;
 type FnGetDevCaps = unsafe extern "system" fn(usize, *mut WaveInCapsW, u32) -> u32;
 type FnOpen =
@@ -88,10 +85,16 @@ type FnOpen =
 type FnHdrOp = unsafe extern "system" fn(HWaveIn, *mut WaveHdr, u32) -> u32;
 type FnStreamOp = unsafe extern "system" fn(HWaveIn) -> u32;
 type FnGetErrorText = unsafe extern "system" fn(u32, *mut u16, u32) -> u32;
+// kernel32, for the CALLBACK_EVENT handle.
+type FnCreateEvent = unsafe extern "system" fn(*mut c_void, i32, i32, *const u16) -> Handle;
+type FnHandleOp = unsafe extern "system" fn(Handle) -> i32;
+type FnWait = unsafe extern "system" fn(Handle, u32) -> u32;
 
-/// Resolved entry points into `winmm.dll`.
+/// Resolved entry points into `winmm.dll` (and the few `kernel32.dll` event
+/// calls capture needs).
 pub struct Winmm {
     _lib: Library,
+    _kernel32: Library,
     get_num_devs: FnGetNumDevs,
     get_dev_caps: FnGetDevCaps,
     open: FnOpen,
@@ -103,6 +106,10 @@ pub struct Winmm {
     reset: FnStreamOp,
     close: FnStreamOp,
     get_error_text: FnGetErrorText,
+    create_event: FnCreateEvent,
+    set_event: FnHandleOp,
+    close_handle: FnHandleOp,
+    wait: FnWait,
 }
 
 unsafe impl Send for Winmm {}
@@ -113,9 +120,14 @@ impl Winmm {
         unsafe {
             let lib =
                 Library::new("winmm.dll").map_err(|e| format!("failed to load winmm.dll: {e}"))?;
+            let kernel32 = Library::new("kernel32.dll")
+                .map_err(|e| format!("failed to load kernel32.dll: {e}"))?;
             macro_rules! sym {
                 ($name:literal) => {
-                    *lib.get($name).map_err(|e| {
+                    sym!(lib, $name)
+                };
+                ($lib:ident, $name:literal) => {
+                    *$lib.get($name).map_err(|e| {
                         format!("missing symbol {}: {e}", String::from_utf8_lossy($name))
                     })?
                 };
@@ -132,7 +144,12 @@ impl Winmm {
                 reset: sym!(b"waveInReset\0"),
                 close: sym!(b"waveInClose\0"),
                 get_error_text: sym!(b"waveInGetErrorTextW\0"),
+                create_event: sym!(kernel32, b"CreateEventW\0"),
+                set_event: sym!(kernel32, b"SetEvent\0"),
+                close_handle: sym!(kernel32, b"CloseHandle\0"),
+                wait: sym!(kernel32, b"WaitForSingleObject\0"),
                 _lib: lib,
+                _kernel32: kernel32,
             })
         }
     }
@@ -160,24 +177,30 @@ fn utf16_to_string(units: &[u16]) -> String {
     String::from_utf16_lossy(&units[..len])
 }
 
-/// Passed to waveInOpen as the callback instance. Holds the captured-sample
-/// sink and the add-buffer entry point the callback needs to recycle buffers.
-struct Sink {
-    samples: Mutex<Vec<i16>>,
-    add_buffer: FnHdrOp,
-    // Once set, the callback drains a returned buffer but does not re-queue it,
-    // so waveInReset/waveInClose during teardown can drain the queue.
-    closing: AtomicBool,
-}
+/// A raw WAVEHDR pointer for the capture thread. The headers are boxed in
+/// [`WinmmCapture`], which outlives the thread (Drop joins it first).
+struct HeaderPtr(*mut WaveHdr);
+unsafe impl Send for HeaderPtr {}
 
-unsafe impl Send for Sink {}
-unsafe impl Sync for Sink {}
+/// The device handle, shared with the capture thread (waveIn calls on one
+/// handle from different threads are allowed).
+#[derive(Clone, Copy)]
+struct DeviceHandle(HWaveIn);
+unsafe impl Send for DeviceHandle {}
+
+/// The event the driver signals whenever it returns a buffer.
+#[derive(Clone, Copy)]
+struct EventHandle(Handle);
+unsafe impl Send for EventHandle {}
 
 /// An open `waveIn` device feeding captured S16 frames into a shared buffer.
 pub struct WinmmCapture {
-    winmm: *const Winmm,
+    winmm: Arc<Winmm>,
     hwi: HWaveIn,
-    sink: Arc<Sink>,
+    event: Handle,
+    samples: Arc<SampleQueue>,
+    stop: Arc<AtomicBool>,
+    worker: Option<JoinHandle<()>>,
     // Boxed so each WAVEHDR keeps a stable heap address: we hand the OS raw
     // pointers to them (waveInPrepareHeader/AddBuffer) and it retains those
     // across later pushes, which would reallocate and move a plain Vec's
@@ -190,18 +213,21 @@ pub struct WinmmCapture {
     channels: u32,
 }
 
-// The handle and headers are only touched from the owning capture thread and
-// the waveIn callback thread (which the OS serializes per device); the shared
-// sample buffer is behind a Mutex.
+// The handle and headers are touched by the owning thread only while the
+// capture thread is not running (open, and Drop after joining it); the
+// samples are behind SampleQueue's lock.
 unsafe impl Send for WinmmCapture {}
 unsafe impl Sync for WinmmCapture {}
 
 const RING_BUFFERS: usize = 4;
 const FRAMES_PER_BUFFER: usize = 2048;
+// How long the capture thread waits for a buffer before rechecking its stop
+// flag.
+const WAIT_MS: u32 = 50;
 
 impl WinmmCapture {
     pub fn open(
-        winmm: &Winmm,
+        winmm: &Arc<Winmm>,
         channels: u32,
         rate: u32,
         device_id: Option<&str>,
@@ -226,23 +252,20 @@ impl WinmmCapture {
             None => WAVE_MAPPER,
         };
 
-        let sink = Arc::new(Sink {
-            samples: Mutex::new(Vec::new()),
-            add_buffer: winmm.add_buffer,
-            closing: AtomicBool::new(false),
-        });
-
         unsafe {
+            // Auto-reset, initially unsignaled.
+            let event = (winmm.create_event)(std::ptr::null_mut(), 0, 0, std::ptr::null());
+            if event.is_null() {
+                return Err("CreateEventW failed".into());
+            }
+            // With CALLBACK_EVENT the driver only signals the event; the
+            // buffers are collected and re-queued on our own thread. (Calling
+            // waveIn functions from a CALLBACK_FUNCTION callback is not
+            // allowed, and re-queueing there raced with teardown.)
             let mut hwi: HWaveIn = std::ptr::null_mut();
-            let rc = (winmm.open)(
-                &mut hwi,
-                device,
-                &format,
-                input_cb as WaveInProc as usize,
-                Arc::as_ptr(&sink) as usize,
-                CALLBACK_FUNCTION,
-            );
+            let rc = (winmm.open)(&mut hwi, device, &format, event as usize, 0, CALLBACK_EVENT);
             if rc != MMSYSERR_NOERROR {
+                (winmm.close_handle)(event);
                 return Err(format!("waveInOpen: {}", winmm.error_text(rc)));
             }
 
@@ -264,13 +287,13 @@ impl WinmmCapture {
                 });
                 let rc = (winmm.prepare)(hwi, &mut *hdr, hdr_size);
                 if rc != MMSYSERR_NOERROR {
-                    Self::teardown(winmm, hwi, &sink, &mut headers);
+                    Self::teardown(winmm, hwi, event, &mut headers);
                     return Err(format!("waveInPrepareHeader: {}", winmm.error_text(rc)));
                 }
                 let rc = (winmm.add_buffer)(hwi, &mut *hdr, hdr_size);
                 if rc != MMSYSERR_NOERROR {
                     (winmm.unprepare)(hwi, &mut *hdr, hdr_size);
-                    Self::teardown(winmm, hwi, &sink, &mut headers);
+                    Self::teardown(winmm, hwi, event, &mut headers);
                     return Err(format!("waveInAddBuffer: {}", winmm.error_text(rc)));
                 }
                 // Push only after the header is queued; the Vec move keeps the
@@ -281,14 +304,27 @@ impl WinmmCapture {
 
             let rc = (winmm.start)(hwi);
             if rc != MMSYSERR_NOERROR {
-                Self::teardown(winmm, hwi, &sink, &mut headers);
+                Self::teardown(winmm, hwi, event, &mut headers);
                 return Err(format!("waveInStart: {}", winmm.error_text(rc)));
             }
 
+            let samples = Arc::new(SampleQueue::default());
+            let stop = Arc::new(AtomicBool::new(false));
+            let worker = Self::spawn_worker(
+                winmm.clone(),
+                DeviceHandle(hwi),
+                EventHandle(event),
+                headers.iter_mut().map(|h| HeaderPtr(&mut **h)).collect(),
+                samples.clone(),
+                stop.clone(),
+            );
             Ok(WinmmCapture {
-                winmm: winmm as *const Winmm,
+                winmm: winmm.clone(),
                 hwi,
-                sink,
+                event,
+                samples,
+                stop,
+                worker: Some(worker),
                 headers,
                 _buffers: buffers,
                 channels,
@@ -296,89 +332,71 @@ impl WinmmCapture {
         }
     }
 
-    /// Stops the device and releases every prepared header. Used both for the
-    /// error path during open and from Drop. `closing` must already be set so
-    /// the callback drains rather than re-queues the buffers waveInReset
-    /// returns.
+    /// Collects each buffer the driver marks done, then hands it back to the
+    /// driver, until `stop` is set.
+    fn spawn_worker(
+        winmm: Arc<Winmm>,
+        hwi: DeviceHandle,
+        event: EventHandle,
+        headers: Vec<HeaderPtr>,
+        samples: Arc<SampleQueue>,
+        stop: Arc<AtomicBool>,
+    ) -> JoinHandle<()> {
+        std::thread::spawn(move || {
+            let (hwi, event) = (hwi, event);
+            let hdr_size = std::mem::size_of::<WaveHdr>() as u32;
+            while !stop.load(Ordering::SeqCst) {
+                unsafe { (winmm.wait)(event.0, WAIT_MS) };
+                for hdr in &headers {
+                    let hdr = hdr.0;
+                    // The driver sets WHDR_DONE from its own thread.
+                    let flags = unsafe { std::ptr::read_volatile(&(*hdr).flags) };
+                    if flags & WHDR_DONE == 0 {
+                        continue;
+                    }
+                    unsafe {
+                        let n = (*hdr).bytes_recorded as usize / 2;
+                        let data = (*hdr).data as *const i16;
+                        if n > 0 && !data.is_null() {
+                            samples.push(std::slice::from_raw_parts(data, n));
+                        }
+                        let rc = (winmm.add_buffer)(hwi.0, hdr, hdr_size);
+                        if rc != MMSYSERR_NOERROR {
+                            samples.fail(format!("waveInAddBuffer: {}", winmm.error_text(rc)));
+                            return;
+                        }
+                    }
+                }
+            }
+        })
+    }
+
+    /// Stops the device and releases every prepared header and the event.
+    /// Used both for the error path during open and from Drop; the capture
+    /// thread, if any, must have exited, so nothing re-queues a buffer.
     #[allow(clippy::vec_box)] // see the `headers` field: stable WAVEHDR addresses.
     unsafe fn teardown(
         winmm: &Winmm,
         hwi: HWaveIn,
-        sink: &Arc<Sink>,
+        event: Handle,
         headers: &mut Vec<Box<WaveHdr>>,
     ) {
-        sink.closing.store(true, Ordering::SeqCst);
         let hdr_size = std::mem::size_of::<WaveHdr>() as u32;
         (winmm.stop)(hwi);
-        // Returns all queued buffers to the callback (which, now closing, just
-        // drains them) so the headers can be unprepared.
+        // Returns all queued buffers so the headers can be unprepared.
         (winmm.reset)(hwi);
         for hdr in headers.iter_mut() {
-            // A callback that read `closing` just before it was set can still
-            // re-queue its buffer after the reset. Its header then refuses to
-            // unprepare, and waveInClose would fail too, leaving the device
-            // open; reset again until it comes back. (Re-queueing a header
-            // that is already unprepared just fails.)
-            for _ in 0..10 {
-                if (winmm.unprepare)(hwi, &mut **hdr, hdr_size) != WAVERR_STILLPLAYING {
-                    break;
-                }
-                (winmm.reset)(hwi);
-            }
+            (winmm.unprepare)(hwi, &mut **hdr, hdr_size);
         }
         (winmm.close)(hwi);
+        (winmm.close_handle)(event);
         headers.clear();
-    }
-}
-
-/// Called by winmm on its own thread when a buffer of input is ready (WIM_DATA)
-/// or on open/close (which we ignore).
-unsafe extern "system" fn input_cb(
-    hwi: HWaveIn,
-    msg: u32,
-    dw_instance: usize,
-    dw_param1: usize,
-    _dw_param2: usize,
-) {
-    if msg != WIM_DATA {
-        return;
-    }
-    let sink = &*(dw_instance as *const Sink);
-    let hdr = dw_param1 as *mut WaveHdr;
-    if hdr.is_null() {
-        return;
-    }
-    let byte_size = (*hdr).bytes_recorded as usize;
-    let data = (*hdr).data as *const i16;
-    let n = byte_size / 2;
-    if n > 0 && !data.is_null() {
-        let slice = std::slice::from_raw_parts(data, n);
-        if let Ok(mut samples) = sink.samples.lock() {
-            samples.extend_from_slice(slice);
-        }
-    }
-    // Recycle the buffer so the device keeps capturing -- unless we are tearing
-    // down, in which case the queue must drain. (waveInProc's documentation
-    // does not list waveInAddBuffer among the calls allowed here, though it is
-    // the common pattern; teardown copes with the late re-queue this allows.)
-    if !sink.closing.load(Ordering::SeqCst) {
-        (sink.add_buffer)(hwi, hdr, std::mem::size_of::<WaveHdr>() as u32);
     }
 }
 
 impl PcmSource for WinmmCapture {
     fn read(&self, max: usize) -> Result<Vec<i16>, String> {
-        let mut samples = self.sink.samples.lock().map_err(|e| e.to_string())?;
-        if samples.is_empty() || max == 0 {
-            return Ok(Vec::new());
-        }
-        if samples.len() <= max {
-            return Ok(std::mem::take(&mut *samples));
-        }
-        // Take the first `max` and keep the remainder for the next call.
-        let rest = samples.split_off(max);
-        let out = std::mem::replace(&mut *samples, rest);
-        Ok(out)
+        self.samples.read(max)
     }
 
     fn channels(&self) -> u32 {
@@ -388,13 +406,12 @@ impl PcmSource for WinmmCapture {
 
 impl Drop for WinmmCapture {
     fn drop(&mut self) {
-        unsafe {
-            let winmm = &*self.winmm;
-            Self::teardown(winmm, self.hwi, &self.sink, &mut self.headers);
+        self.stop.store(true, Ordering::SeqCst);
+        unsafe { (self.winmm.set_event)(self.event) };
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
         }
-        // Keep the Sink alive until after the device is closed so the callback
-        // cannot deref a freed pointer mid-stop.
-        let _ = &self.sink;
+        unsafe { Self::teardown(&self.winmm, self.hwi, self.event, &mut self.headers) };
     }
 }
 
@@ -463,6 +480,37 @@ mod tests {
         assert!(defaults <= 1, "at most one default, found {defaults}");
         if !devices.is_empty() {
             assert!(devices[0].is_default, "first device should be the default");
+        }
+    }
+
+    #[test]
+    fn captures_and_stops_promptly() {
+        let winmm = Arc::new(Winmm::load().unwrap());
+        // A host without an input device cannot open one; nothing to test.
+        let Ok(capture) = WinmmCapture::open(&winmm, 1, 16_000, None) else {
+            return;
+        };
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let samples = capture.read(usize::MAX).unwrap();
+        assert!(
+            samples.len() > 4_000,
+            "got {} samples in 500 ms",
+            samples.len()
+        );
+        let started = std::time::Instant::now();
+        drop(capture);
+        assert!(started.elapsed() < std::time::Duration::from_millis(500));
+    }
+
+    #[test]
+    fn survives_rapid_open_and_close() {
+        let winmm = Arc::new(Winmm::load().unwrap());
+        for _ in 0..20 {
+            let Ok(capture) = WinmmCapture::open(&winmm, 2, 48_000, None) else {
+                return;
+            };
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            drop(capture);
         }
     }
 }

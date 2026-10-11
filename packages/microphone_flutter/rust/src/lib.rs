@@ -29,7 +29,7 @@ mod winmm;
 #[cfg(target_os = "linux")]
 mod alsa;
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "windows"))]
 mod queue;
 
 /// A platform audio input that yields interleaved S16LE frames on demand.

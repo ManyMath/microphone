@@ -1,5 +1,5 @@
-//! The sample queue between a backend's reader thread and `PcmSource::read`,
-//! used by the pull-based backends (ALSA, AAudio).
+//! The sample queue between a backend's capture thread and `PcmSource::read`
+//! (ALSA, AAudio, waveIn).
 
 use std::sync::Mutex;
 
