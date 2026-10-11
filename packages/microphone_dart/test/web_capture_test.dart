@@ -31,6 +31,50 @@ void main() {
     await recording.dispose();
   });
 
+  test('captures through an AudioWorklet in ~20 ms batches', () async {
+    final recording = await Microphone.record();
+    final sizes = <int>[];
+    recording.frames.listen((c) => sizes.add(c.length));
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    await recording.stop();
+    final batch = 2 * (recording.format.sampleRate / 50).round();
+    expect(sizes, isNotEmpty);
+    expect(sizes.every((n) => n <= batch), isTrue, reason: '$sizes');
+    expect(sizes.where((n) => n == batch), isNotEmpty);
+    await recording.dispose();
+  });
+
+  test('falls back to a ScriptProcessor without AudioWorklet', () async {
+    // Hide BaseAudioContext.prototype.audioWorklet for this test.
+    final object = globalContext['Object'] as JSObject;
+    final prototype =
+        (globalContext['BaseAudioContext'] as JSObject)['prototype']
+            as JSObject;
+    final descriptor = object.callMethod<JSObject>(
+      'getOwnPropertyDescriptor'.toJS,
+      prototype,
+      'audioWorklet'.toJS,
+    );
+    prototype.delete('audioWorklet'.toJS);
+    addTearDown(
+      () => object.callMethod<JSAny?>(
+        'defineProperty'.toJS,
+        prototype,
+        'audioWorklet'.toJS,
+        descriptor,
+      ),
+    );
+
+    final recording = await Microphone.record();
+    final sizes = <int>[];
+    recording.frames.listen((c) => sizes.add(c.length));
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    await recording.stop();
+    expect(sizes, isNotEmpty);
+    expect(sizes.every((n) => n == 4096 * 2), isTrue, reason: '$sizes');
+    await recording.dispose();
+  });
+
   test('pause drops audio and resume continues', () async {
     final recording = await Microphone.record();
     await Future<void>.delayed(const Duration(milliseconds: 300));
