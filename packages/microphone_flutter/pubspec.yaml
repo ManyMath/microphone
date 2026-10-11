@@ -38,7 +38,7 @@ flutter:
         package: com.manymath.microphone_flutter
         pluginClass: MicrophoneFlutterPlugin
         dartPluginClass: MicrophoneFlutterAndroid
-        dartFileName: src/android_permission.dart
+        dartFileName: src/android.dart
       ios:
         ffiPlugin: true
       linux:

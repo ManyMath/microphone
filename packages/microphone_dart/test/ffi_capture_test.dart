@@ -216,16 +216,16 @@ void main() {
       expect(await backend.requestPermission(), isTrue);
     });
 
-    group('with NativePermission hooks', () {
+    group('with NativePlatform permission hooks', () {
       tearDown(() {
-        NativePermission.check = null;
-        NativePermission.request = null;
+        NativePlatform.checkPermission = null;
+        NativePlatform.requestPermission = null;
       });
 
       test('record asks first and fails when refused', () async {
         var asked = 0;
-        NativePermission.check = () async => false;
-        NativePermission.request = () async {
+        NativePlatform.checkPermission = () async => false;
+        NativePlatform.requestPermission = () async {
           asked++;
           return false;
         };
@@ -240,8 +240,8 @@ void main() {
 
       test('record proceeds once the request is granted', () async {
         var granted = false;
-        NativePermission.check = () async => granted;
-        NativePermission.request = () async => granted = true;
+        NativePlatform.checkPermission = () async => granted;
+        NativePlatform.requestPermission = () async => granted = true;
         Microphone.registerBackend(FfiBackend(), makeActive: true);
         final recording = await Microphone.record();
         expect(granted, isTrue);

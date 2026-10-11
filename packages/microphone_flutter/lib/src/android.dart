@@ -8,9 +8,9 @@ abstract final class MicrophoneFlutterAndroid {
   static const _channel = MethodChannel('microphone_flutter');
 
   static void registerWith() {
-    NativePermission.check = () async =>
+    NativePlatform.checkPermission = () async =>
         await _channel.invokeMethod<bool>('hasPermission') ?? false;
-    NativePermission.request = () async =>
+    NativePlatform.requestPermission = () async =>
         await _channel.invokeMethod<bool>('requestPermission') ?? false;
   }
 }

@@ -10,7 +10,7 @@ import '../../capture_device.dart';
 import '../../capture_format.dart';
 import '../../exceptions.dart';
 import '../../file_writer.dart';
-import '../../native_permission.dart';
+import '../../native_platform.dart';
 import '../../recording.dart';
 import '../../wav.dart';
 
@@ -235,11 +235,11 @@ class FfiBackend extends CaptureBackend {
   }
 
   // macOS and iOS answer through the native library; Android through the
-  // NativePermission hooks microphone_flutter installs. Linux and Windows do
+  // NativePlatform hooks microphone_flutter installs. Linux and Windows do
   // not gate capture, so the native answer there is "not applicable".
   @override
   Future<bool> hasPermission() async {
-    final check = NativePermission.check;
+    final check = NativePlatform.checkPermission;
     if (check != null) return check();
     final status = _permissionStatus();
     return status == _permissionGranted || status == _permissionNotApplicable;
@@ -247,7 +247,7 @@ class FfiBackend extends CaptureBackend {
 
   @override
   Future<bool> requestPermission() async {
-    final request = NativePermission.request;
+    final request = NativePlatform.requestPermission;
     if (request != null) return request();
     final ask = isAvailable ? _bindings!.requestPermission : null;
     if (ask == null) return true;
