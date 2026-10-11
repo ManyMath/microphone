@@ -34,6 +34,8 @@ const CALLBACK_EVENT: u32 = 0x0005_0000;
 const WAVE_MAPPER: u32 = 0xFFFF_FFFF;
 // WAVEHDR::dwFlags: the driver has finished with the buffer.
 const WHDR_DONE: u32 = 0x0000_0001;
+// waveInMessage: query the preferred (default) input device id.
+const DRVM_MAPPER_PREFERRED_GET: u32 = 0x2015;
 // Max device-name length (in WCHARs) in WAVEINCAPSW::szPname.
 const MAXPNAMELEN: usize = 32;
 
@@ -85,6 +87,7 @@ type FnOpen =
 type FnHdrOp = unsafe extern "system" fn(HWaveIn, *mut WaveHdr, u32) -> u32;
 type FnStreamOp = unsafe extern "system" fn(HWaveIn) -> u32;
 type FnGetErrorText = unsafe extern "system" fn(u32, *mut u16, u32) -> u32;
+type FnMessage = unsafe extern "system" fn(HWaveIn, u32, usize, usize) -> u32;
 // kernel32, for the CALLBACK_EVENT handle.
 type FnCreateEvent = unsafe extern "system" fn(*mut c_void, i32, i32, *const u16) -> Handle;
 type FnHandleOp = unsafe extern "system" fn(Handle) -> i32;
@@ -106,6 +109,7 @@ pub struct Winmm {
     reset: FnStreamOp,
     close: FnStreamOp,
     get_error_text: FnGetErrorText,
+    message: FnMessage,
     create_event: FnCreateEvent,
     set_event: FnHandleOp,
     close_handle: FnHandleOp,
@@ -144,6 +148,7 @@ impl Winmm {
                 reset: sym!(b"waveInReset\0"),
                 close: sym!(b"waveInClose\0"),
                 get_error_text: sym!(b"waveInGetErrorTextW\0"),
+                message: sym!(b"waveInMessage\0"),
                 create_event: sym!(kernel32, b"CreateEventW\0"),
                 set_event: sym!(kernel32, b"SetEvent\0"),
                 close_handle: sym!(kernel32, b"CloseHandle\0"),
@@ -417,11 +422,9 @@ impl Drop for WinmmCapture {
 
 /// Enumerates every `waveIn` input device. Returns an empty Vec on any failure.
 ///
-/// `waveIn` identifies devices by index, so the ids are decimal indices.
-/// `waveIn` has no real "default device" query (capturing with no device
-/// selected uses WAVE_MAPPER, the system-preferred input), so we flag the first
-/// enumerated device as the default -- the conventional preferred input -- to
-/// match the cross-platform contract that the device list exposes one default.
+/// `waveIn` identifies devices by index, so the ids are decimal indices. The
+/// default is the input WAVE_MAPPER uses (the system's preferred input), or the
+/// first device if that cannot be queried.
 pub fn enumerate_input_devices() -> Vec<DeviceInfo> {
     let winmm = match Winmm::load() {
         Ok(w) => w,
@@ -429,6 +432,7 @@ pub fn enumerate_input_devices() -> Vec<DeviceInfo> {
     };
     unsafe {
         let count = (winmm.get_num_devs)();
+        let preferred = preferred_input(&winmm);
         let mut out = Vec::with_capacity(count as usize);
         for i in 0..count {
             let mut caps: WaveInCapsW = std::mem::zeroed();
@@ -448,13 +452,30 @@ pub fn enumerate_input_devices() -> Vec<DeviceInfo> {
                 } else {
                     name
                 },
-                // The first device we successfully enumerate stands in for the
-                // system default (waveIn exposes no default-device query).
-                is_default: out.is_empty(),
+                is_default: false,
             });
+        }
+        let default = preferred
+            .and_then(|p| out.iter().position(|d| d.id == p.to_string()))
+            .unwrap_or(0);
+        if let Some(d) = out.get_mut(default) {
+            d.is_default = true;
         }
         out
     }
+}
+
+/// The index of the input WAVE_MAPPER records from, if the driver says.
+unsafe fn preferred_input(winmm: &Winmm) -> Option<u32> {
+    let mut device: u32 = u32::MAX;
+    let mut flags: u32 = 0;
+    let rc = (winmm.message)(
+        WAVE_MAPPER as usize as HWaveIn,
+        DRVM_MAPPER_PREFERRED_GET,
+        &mut device as *mut u32 as usize,
+        &mut flags as *mut u32 as usize,
+    );
+    (rc == MMSYSERR_NOERROR && device != u32::MAX).then_some(device)
 }
 
 #[cfg(test)]
@@ -475,12 +496,22 @@ mod tests {
             assert!(!d.id.is_empty(), "device id should be a non-empty index");
             assert!(!d.name.is_empty(), "device name should not be empty");
         }
-        // At most one default, and when any device exists the first is default.
+        // Exactly one default whenever any device exists.
         let defaults = devices.iter().filter(|d| d.is_default).count();
-        assert!(defaults <= 1, "at most one default, found {defaults}");
-        if !devices.is_empty() {
-            assert!(devices[0].is_default, "first device should be the default");
+        assert_eq!(defaults, usize::from(!devices.is_empty()));
+    }
+
+    #[test]
+    fn the_default_is_the_mapper_preferred_input() {
+        let winmm = Winmm::load().unwrap();
+        let devices = enumerate_input_devices();
+        if devices.is_empty() {
+            return;
         }
+        let preferred =
+            unsafe { preferred_input(&winmm) }.expect("the mapper reports a preferred input");
+        let default = devices.iter().find(|d| d.is_default).unwrap();
+        assert_eq!(default.id, preferred.to_string());
     }
 
     #[test]
