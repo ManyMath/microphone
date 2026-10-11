@@ -267,6 +267,8 @@ class FfiBackend extends CaptureBackend {
 
   @override
   Future<List<CaptureDevice>> devices() async {
+    final hook = NativePlatform.devices;
+    if (hook != null) return hook();
     if (!isAvailable) return const [];
     final b = _bindings!;
     final count = b.deviceCount();
