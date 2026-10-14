@@ -24,7 +24,7 @@ use crate::{DeviceInfo, PcmSource};
 // --- Win32 multimedia ABI constants ----------------------------------------
 
 // MMRESULT success.
-const MMSYSERR_NOERROR: u32 = 0;
+pub(crate) const MMSYSERR_NOERROR: u32 = 0;
 // LPWAVEFORMATEX format tag for uncompressed PCM.
 const WAVE_FORMAT_PCM: u16 = 1;
 // waveInOpen: signal the event handle passed as dwCallback when a buffer is
@@ -39,7 +39,7 @@ const DRVM_MAPPER_PREFERRED_GET: u32 = 0x2015;
 // Max device-name length (in WCHARs) in WAVEINCAPSW::szPname.
 const MAXPNAMELEN: usize = 32;
 
-type HWaveIn = *mut c_void;
+pub(crate) type HWaveIn = *mut c_void;
 type Handle = *mut c_void;
 
 // WAVEFORMATEX (we only ever describe integer PCM, so cbSize is 0).
@@ -157,6 +157,17 @@ impl Winmm {
                 _kernel32: kernel32,
             })
         }
+    }
+
+    /// waveInGetNumDevs.
+    #[cfg(test)]
+    pub(crate) unsafe fn device_count(&self) -> u32 {
+        (self.get_num_devs)()
+    }
+
+    /// waveInMessage, for driver queries.
+    pub(crate) unsafe fn message(&self, device: HWaveIn, msg: u32, dw1: usize, dw2: usize) -> u32 {
+        (self.message)(device, msg, dw1, dw2)
     }
 
     /// Maps an MMRESULT to a human-readable message via waveInGetErrorTextW,
@@ -433,6 +444,7 @@ pub fn enumerate_input_devices() -> Vec<DeviceInfo> {
     unsafe {
         let count = (winmm.get_num_devs)();
         let preferred = preferred_input(&winmm);
+        let full_names = crate::winmm_names::full_names(&winmm, count);
         let mut out = Vec::with_capacity(count as usize);
         for i in 0..count {
             let mut caps: WaveInCapsW = std::mem::zeroed();
@@ -444,7 +456,12 @@ pub fn enumerate_input_devices() -> Vec<DeviceInfo> {
             if rc != MMSYSERR_NOERROR {
                 continue;
             }
-            let name = utf16_to_string(&caps.pname);
+            // szPname is cut at 31 characters; prefer the endpoint's name.
+            let name = full_names
+                .get(i as usize)
+                .cloned()
+                .flatten()
+                .unwrap_or_else(|| utf16_to_string(&caps.pname));
             out.push(DeviceInfo {
                 id: i.to_string(),
                 name: if name.is_empty() {

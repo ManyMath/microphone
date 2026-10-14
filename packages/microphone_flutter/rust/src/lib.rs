@@ -26,6 +26,9 @@ mod aaudio;
 #[cfg(target_os = "windows")]
 mod winmm;
 
+#[cfg(target_os = "windows")]
+mod winmm_names;
+
 #[cfg(target_os = "linux")]
 mod alsa;
 
