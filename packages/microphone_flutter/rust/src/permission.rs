@@ -9,6 +9,7 @@
 
 use std::ffi::c_void;
 use std::os::raw::{c_char, c_int, c_ulong};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::OnceLock;
 
 use libloading::Library;
@@ -66,6 +67,9 @@ impl Runtime {
         let framework = Some(
             Library::new("/System/Library/Frameworks/AVFoundation.framework/AVFoundation").ok()?,
         );
+        let sel: unsafe extern "C" fn(*const c_char) -> Sel =
+            *objc.get(b"sel_registerName\0").ok()?;
+        let msg_send: *const c_void = *objc.get::<*const c_void>(b"objc_msgSend\0").ok()?;
         #[cfg(target_os = "macos")]
         let media_type_audio = {
             let symbol: libloading::Symbol<*const Id> =
@@ -78,10 +82,10 @@ impl Runtime {
         };
         Some(Runtime {
             get_class,
-            sel: *objc.get(b"sel_registerName\0").ok()?,
+            sel,
             object_get_class: *objc.get(b"object_getClass\0").ok()?,
             responds_to: *objc.get(b"class_respondsToSelector\0").ok()?,
-            msg_send: *objc.get::<*const c_void>(b"objc_msgSend\0").ok()?,
+            msg_send,
             #[cfg(target_os = "macos")]
             media_type_audio,
             _framework: framework,
@@ -124,7 +128,20 @@ pub fn status() -> c_int {
     let Some(rt) = runtime() else {
         return PERMISSION_NOT_APPLICABLE;
     };
-    unsafe { status_with(rt) }.unwrap_or(PERMISSION_NOT_APPLICABLE)
+    let state = unsafe { status_with(rt) }.unwrap_or(PERMISSION_NOT_APPLICABLE);
+    if state != PERMISSION_UNDETERMINED {
+        return state;
+    }
+    // The system can answer a request without recording a decision (e.g. a
+    // sandboxed app lacking the audio-input entitlement, or a process with no
+    // app to attribute the prompt to), leaving the status undetermined for
+    // good. Take the answer the request's completion handler was given, so a
+    // caller polling for the decision is not left waiting forever.
+    match ANSWER.load(Ordering::SeqCst) {
+        ANSWER_GRANTED => PERMISSION_GRANTED,
+        ANSWER_REFUSED => PERMISSION_DENIED,
+        _ => PERMISSION_UNDETERMINED,
+    }
 }
 
 #[cfg(target_os = "ios")]
@@ -170,6 +187,7 @@ pub fn request() -> c_int {
     let Some(rt) = runtime() else {
         return PERMISSION_NOT_APPLICABLE;
     };
+    ANSWER.store(ANSWER_PENDING, Ordering::SeqCst);
     match unsafe { request_with(rt) } {
         Some(()) => PERMISSION_UNDETERMINED,
         None => PERMISSION_NOT_APPLICABLE,
@@ -181,7 +199,7 @@ unsafe fn request_with(rt: &Runtime) -> Option<()> {
     let session = rt.audio_session()?;
     let sel = rt.implemented(session, c"requestRecordPermission:")?;
     let send: unsafe extern "C" fn(Id, Sel, *const Block) = std::mem::transmute(rt.msg_send);
-    send(session, sel, &IGNORE_ANSWER.0);
+    send(session, sel, &RECORD_ANSWER.0);
     Some(())
 }
 
@@ -190,14 +208,20 @@ unsafe fn request_with(rt: &Runtime) -> Option<()> {
     let class = rt.capture_device()?;
     let sel = rt.implemented(class, c"requestAccessForMediaType:completionHandler:")?;
     let send: unsafe extern "C" fn(Id, Sel, Id, *const Block) = std::mem::transmute(rt.msg_send);
-    send(class, sel, rt.media_type_audio, &IGNORE_ANSWER.0);
+    send(class, sel, rt.media_type_audio, &RECORD_ANSWER.0);
     Some(())
 }
 
+// The answer the last request's completion handler was given.
+const ANSWER_PENDING: u8 = 0;
+const ANSWER_GRANTED: u8 = 1;
+const ANSWER_REFUSED: u8 = 2;
+static ANSWER: AtomicU8 = AtomicU8::new(ANSWER_PENDING);
+
 // The completion handler both request APIs require (they call it
-// unconditionally, so it cannot be nil). The answer is read back through
-// status(), so the block does nothing. It is a global block -- no captures, so
-// it needs no copying or freeing -- laid out per the Blocks ABI.
+// unconditionally, so it cannot be nil). It is a global block -- no captures,
+// so it needs no copying or freeing -- laid out per the Blocks ABI, with the
+// type signature clang would emit for `^(BOOL granted)`.
 
 #[repr(C)]
 struct Opaque {
@@ -209,10 +233,12 @@ extern "C" {
     static _NSConcreteGlobalBlock: Opaque;
 }
 
+// Without copy/dispose helpers, the signature directly follows the size.
 #[repr(C)]
 struct BlockDescriptor {
     reserved: c_ulong,
     size: c_ulong,
+    signature: *const c_char,
 }
 
 #[repr(C)]
@@ -226,23 +252,42 @@ struct Block {
 
 struct SyncBlock(Block);
 unsafe impl Sync for SyncBlock {}
+struct SyncDescriptor(BlockDescriptor);
+unsafe impl Sync for SyncDescriptor {}
 
 const BLOCK_IS_GLOBAL: c_int = 1 << 28;
+const BLOCK_HAS_SIGNATURE: c_int = 1 << 30;
 
-static IGNORE_ANSWER_DESCRIPTOR: BlockDescriptor = BlockDescriptor {
+// `void (^)(BOOL)`. BOOL is `signed char` (c) only on Intel macOS; it is `bool`
+// (B) on Apple-silicon macOS and on every 64-bit iOS target, simulators
+// included.
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+const SIGNATURE: &std::ffi::CStr = c"v12@?0c8";
+#[cfg(not(all(target_os = "macos", target_arch = "x86_64")))]
+const SIGNATURE: &std::ffi::CStr = c"v12@?0B8";
+
+static RECORD_ANSWER_DESCRIPTOR: SyncDescriptor = SyncDescriptor(BlockDescriptor {
     reserved: 0,
     size: std::mem::size_of::<Block>() as c_ulong,
-};
+    signature: SIGNATURE.as_ptr(),
+});
 
 // Taking an extern static's address needed `unsafe` before Rust 1.82.
 #[allow(unused_unsafe)]
-static IGNORE_ANSWER: SyncBlock = SyncBlock(Block {
+static RECORD_ANSWER: SyncBlock = SyncBlock(Block {
     isa: unsafe { std::ptr::addr_of!(_NSConcreteGlobalBlock) },
-    flags: BLOCK_IS_GLOBAL,
+    flags: BLOCK_IS_GLOBAL | BLOCK_HAS_SIGNATURE,
     reserved: 0,
-    invoke: ignore_answer,
-    descriptor: &IGNORE_ANSWER_DESCRIPTOR,
+    invoke: record_answer,
+    descriptor: &RECORD_ANSWER_DESCRIPTOR.0,
 });
 
-/// `^(BOOL granted) {}`
-unsafe extern "C" fn ignore_answer(_block: *const Block, _granted: u8) {}
+/// `^(BOOL granted) { ANSWER = granted ? GRANTED : REFUSED; }`
+unsafe extern "C" fn record_answer(_block: *const Block, granted: u8) {
+    let answer = if granted != 0 {
+        ANSWER_GRANTED
+    } else {
+        ANSWER_REFUSED
+    };
+    ANSWER.store(answer, Ordering::SeqCst);
+}
