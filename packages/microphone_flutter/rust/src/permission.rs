@@ -72,13 +72,17 @@ impl Runtime {
         let msg_send: *const c_void = *objc.get::<*const c_void>(b"objc_msgSend\0").ok()?;
         #[cfg(target_os = "macos")]
         let media_type_audio = {
-            let symbol: libloading::Symbol<*const Id> =
-                framework.as_ref()?.get(b"AVMediaTypeAudio\0").ok()?;
-            let value = **symbol;
-            if value.is_null() {
-                return None;
+            let exported = framework
+                .as_ref()?
+                .get::<*const Id>(b"AVMediaTypeAudio\0")
+                .ok()
+                .map(|symbol| **symbol)
+                .filter(|value| !value.is_null());
+            // The constant's value is "soun"; build it if the symbol is missing.
+            match exported {
+                Some(value) => value,
+                None => ns_string_retained(get_class, sel, msg_send, c"soun")?,
             }
-            value
         };
         Some(Runtime {
             get_class,
@@ -121,6 +125,29 @@ impl Runtime {
         let class = (self.get_class)(c"AVCaptureDevice".as_ptr());
         (!class.is_null()).then_some(class)
     }
+}
+
+/// `[[NSString stringWithUTF8String:text] retain]`, kept for the process's
+/// lifetime.
+#[cfg(target_os = "macos")]
+unsafe fn ns_string_retained(
+    get_class: unsafe extern "C" fn(*const c_char) -> Class,
+    sel: unsafe extern "C" fn(*const c_char) -> Sel,
+    msg_send: *const c_void,
+    text: &std::ffi::CStr,
+) -> Option<Id> {
+    let class = get_class(c"NSString".as_ptr());
+    if class.is_null() {
+        return None;
+    }
+    let with_utf8: unsafe extern "C" fn(Id, Sel, *const c_char) -> Id =
+        std::mem::transmute(msg_send);
+    let string = with_utf8(class, sel(c"stringWithUTF8String:".as_ptr()), text.as_ptr());
+    if string.is_null() {
+        return None;
+    }
+    let retain: unsafe extern "C" fn(Id, Sel) -> Id = std::mem::transmute(msg_send);
+    Some(retain(string, sel(c"retain".as_ptr())))
 }
 
 /// The current permission state, as one of the `PERMISSION_*` codes.
