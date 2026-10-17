@@ -6,7 +6,9 @@ import 'capture_device.dart';
 /// On Android, requesting `RECORD_AUDIO` needs the app's Activity and listing
 /// inputs needs `AudioManager`, so `microphone_flutter` installs these there.
 /// Elsewhere the native library answers itself, and pure-Dart programs leave
-/// them null.
+/// them null. Integrations import this from
+/// `package:microphone_dart/platform_hooks.dart`; apps should leave these hooks
+/// alone.
 abstract final class NativePlatform {
   /// Whether the app holds microphone permission. Overrides the native
   /// library's answer when set.

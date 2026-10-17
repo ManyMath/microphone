@@ -7,8 +7,9 @@
   the real state, and `record()` asks first when permission is missing,
   throwing `PermissionDeniedException` if refused. Previously the FFI backend
   always claimed permission, so a denied app recorded silence. New
-  `NativePlatform` hooks let a platform integration supply permission and the
-  device list where the native library cannot.
+  `NativePlatform` hooks in `package:microphone_dart/platform_hooks.dart`
+  (not exported from the main library) let a platform integration supply
+  permission and the device list where the native library cannot.
 - Web: capture runs on an AudioWorklet (off the main thread, ~20 ms batches),
   with ScriptProcessor as the fallback; paused audio can no longer leak in after
   `resume()`.

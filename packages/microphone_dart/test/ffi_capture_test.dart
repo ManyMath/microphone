@@ -4,6 +4,7 @@ library;
 import 'dart:typed_data';
 
 import 'package:microphone_dart/microphone_dart.dart';
+import 'package:microphone_dart/platform_hooks.dart';
 import 'package:microphone_dart/src/backends/native/native_backend_ffi.dart';
 import 'package:test/test.dart';
 

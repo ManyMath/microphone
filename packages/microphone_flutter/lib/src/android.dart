@@ -1,5 +1,6 @@
 import 'package:flutter/services.dart';
 import 'package:microphone_dart/microphone_dart.dart';
+import 'package:microphone_dart/platform_hooks.dart';
 
 /// Registered automatically on Android (the plugin's `dartPluginClass`): routes
 /// what the native backend cannot do there -- the permission check and request
