@@ -1,7 +1,17 @@
 # Changelog
 
-## Unreleased
+## 0.0.2
 
+- Permission: `requestPermission()` now shows the system prompt on macOS and
+  iOS (and on Android through `microphone_flutter`), `hasPermission()` reports
+  the real state, and `record()` asks first when permission is missing,
+  throwing `PermissionDeniedException` if refused. Previously the FFI backend
+  always claimed permission, so a denied app recorded silence. New
+  `NativePlatform` hooks let a platform integration supply permission and the
+  device list where the native library cannot.
+- Web: capture runs on an AudioWorklet (off the main thread, ~20 ms batches),
+  with ScriptProcessor as the fallback; paused audio can no longer leak in after
+  `resume()`.
 - `StreamCaptureBackend` presents an injected PCM stream as a capture source,
   and `MixingCaptureBackend` sums several sources into one recording, clocked
   by a primary source.
@@ -9,9 +19,12 @@
   keeps open-ended live recordings from accumulating PCM without bound.
 - A backend pinned with `makeActive` / `useBackend` now survives later
   registrations.
-- Linux: `Microphone.devices()` lists ALSA capture devices (`default` first,
-  then each card's input PCMs), and `record(deviceId: ...)` captures from the
-  selected one.
+- Device selection: Linux lists ALSA capture devices (`default` first, then
+  each card's input PCMs) and Android lists `AudioManager` inputs (through
+  `microphone_flutter`); `record(deviceId: ...)` captures from the selected one
+  on both, failing rather than falling back if it is unavailable. Windows
+  reports full device names (no longer cut at 31 characters) and flags the
+  input Windows actually records from as the default.
 - FFI backend fixes:
   - `stop()` no longer drops audio queued while the isolate was busy (only the
     first 16384 samples of the backlog were kept).
@@ -23,7 +36,9 @@
 - Native library fixes: ALSA and AAudio read errors (e.g. an Android route
   change) end the recording with an error instead of silence; ALSA recovers
   from overruns and stops without stalling the isolate; CoreAudio start fails
-  if a buffer cannot be queued; waveIn teardown releases every buffer.
+  if a buffer cannot be queued; waveIn buffers are serviced on a capture
+  thread instead of the driver callback, and teardown releases all of them; on
+  iOS, playback stays on the speaker (or Bluetooth headphones) while capturing.
 - Mixing: a source that fails to start no longer leaves the others running,
   and `stop()` keeps the primary's final chunk.
 - Web backend fixes: a selected `deviceId` is required exactly; only a refused

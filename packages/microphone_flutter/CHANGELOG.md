@@ -1,9 +1,16 @@
-## Unreleased
+## 0.0.2
 
-- Bundles the native capture fixes listed in `microphone_dart`'s changelog.
-- Docs: Android apps must request `RECORD_AUDIO` at runtime themselves
-  (`requestPermission()` does not prompt on native platforms), the plugin needs
-  Android API 26+, and precompiled binaries are not published yet.
+- Fixes the build: 0.0.1 could not build in any app, because its platform
+  builds pointed at the Rust crate outside the published package. The crate
+  now ships in the package (`rust/`).
+- Android builds with Gradle 9 (the vendored cargokit Gradle plugin no longer
+  uses the removed `Project.exec`) and with Flutter's default `minSdk`; on
+  devices older than Android 8.0 recording fails with a `CaptureException`.
+- Android: `Microphone.requestPermission()` asks for `RECORD_AUDIO`, and
+  `Microphone.record()` asks by itself when it is missing; `Microphone.devices()`
+  lists the inputs and `record(deviceId: ...)` selects one.
+- Bundles the native capture fixes listed in `microphone_dart`'s changelog,
+  including the macOS/iOS permission prompt.
 - Requires Flutter 3.38+ (matching the Dart ^3.10 floor); the macOS pod targets
   10.15; podspec metadata filled in.
 - Example app: Record is disabled while a recording starts, and capture errors
