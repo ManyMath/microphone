@@ -51,6 +51,9 @@
 - `wavFromPcm` throws `MicrophoneException` for PCM over the 4 GiB WAV limit
   instead of writing a truncated size, and pads odd-sized data to an even
   chunk.
+- `StreamCaptureBackend` and `MixingCaptureBackend` stay sample-aligned when a
+  source cuts a chunk mid-sample, instead of shifting every later sample by a
+  byte.
 
 ## 0.0.1
 
