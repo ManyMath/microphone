@@ -48,6 +48,9 @@
   twice; a failed Web Audio setup releases the microphone; a track ended by the
   browser ends the recording with an error.
 - `AudioLevel.fromPcm` accepts chunks at odd byte offsets.
+- `wavFromPcm` throws `MicrophoneException` for PCM over the 4 GiB WAV limit
+  instead of writing a truncated size, and pads odd-sized data to an even
+  chunk.
 
 ## 0.0.1
 
