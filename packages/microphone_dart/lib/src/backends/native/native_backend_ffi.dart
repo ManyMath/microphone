@@ -41,6 +41,9 @@ typedef _DeviceIsDefault = int Function(int);
 typedef _PermissionNative = Int32 Function();
 typedef _Permission = int Function();
 
+// How long requestPermission waits for an answer to the system prompt.
+const Duration _permissionPromptLimit = Duration(minutes: 10);
+
 // microphone_permission_status codes.
 const int _permissionNotApplicable = 0;
 const int _permissionUndetermined = 1;
@@ -252,8 +255,13 @@ class FfiBackend extends CaptureBackend {
     final ask = isAvailable ? _bindings!.requestPermission : null;
     if (ask == null) return true;
     var status = ask();
-    // The prompt is answered asynchronously; the native side only starts it.
-    while (status == _permissionUndetermined) {
+    // The prompt is answered asynchronously; the native side only starts it
+    // and reports the answer once the user (or the system) gives one. A
+    // prompt may sit unanswered for a while, but give up eventually rather
+    // than wait forever on one the system never showed.
+    final waited = Stopwatch()..start();
+    while (status == _permissionUndetermined &&
+        waited.elapsed < _permissionPromptLimit) {
       await Future<void>.delayed(const Duration(milliseconds: 100));
       status = _permissionStatus();
     }
