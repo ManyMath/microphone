@@ -1,3 +1,7 @@
+## Unreleased
+
+- Add opt-in application-managed iOS audio sessions without changing automatic capture or existing custom backend contracts. Requires native ABI 3 when selected.
+
 # Changelog
 
 ## 0.0.2

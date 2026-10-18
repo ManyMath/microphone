@@ -70,3 +70,24 @@ abstract class CaptureBackend {
   /// Releases any global resources held by the backend.
   Future<void> dispose();
 }
+
+/// Ownership of the process-wide iOS audio session during capture.
+enum AudioSessionManagement {
+  /// Preserve microphone's automatic record-capable category and activation.
+  automatic,
+
+  /// The application owns category, activation, routing and interruptions.
+  /// Microphone must not activate, reconfigure or deactivate the session.
+  application,
+}
+
+/// Optional capability for capture backends supporting explicit session ownership.
+/// Existing [CaptureBackend] implementations remain source-compatible.
+abstract interface class AudioSessionCaptureBackend {
+  Future<Recording> startRecordingWithAudioSession({
+    required AudioSessionManagement audioSessionManagement,
+    CaptureFormat format = const CaptureFormat(),
+    String? deviceId,
+    bool retainPcm = true,
+  });
+}

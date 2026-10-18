@@ -122,15 +122,35 @@ class Microphone {
   /// false for an open-ended live stream so the recording does not accumulate
   /// PCM without bound. Throws [PermissionDeniedException] if access is
   /// refused.
+  /// With [AudioSessionManagement.application], the app must configure and
+  /// activate its iOS session before capture and handle interruptions/routing.
+  /// Unsupported backends throw [UnsupportedError]; they never silently fall
+  /// back to automatic session mutation.
   static Future<Recording> record({
     CaptureFormat format = const CaptureFormat(),
     String? deviceId,
     bool retainPcm = true,
+    AudioSessionManagement audioSessionManagement =
+        AudioSessionManagement.automatic,
   }) async {
     final b = backend;
+    if (audioSessionManagement == AudioSessionManagement.application &&
+        b is! AudioSessionCaptureBackend) {
+      throw UnsupportedError(
+        'Backend ${b.name} does not support application-managed audio sessions',
+      );
+    }
     if (!_initialized.contains(b)) {
       await b.initialize();
       _initialized.add(b);
+    }
+    if (audioSessionManagement == AudioSessionManagement.application) {
+      return (b as AudioSessionCaptureBackend).startRecordingWithAudioSession(
+        audioSessionManagement: audioSessionManagement,
+        format: format,
+        deviceId: deviceId,
+        retainPcm: retainPcm,
+      );
     }
     return b.startRecording(
       format: format,

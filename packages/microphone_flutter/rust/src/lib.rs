@@ -17,6 +17,8 @@ mod coreaudio;
 #[cfg(target_os = "ios")]
 mod ios_session;
 
+mod session_policy;
+
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 mod permission;
 
@@ -133,6 +135,7 @@ impl Recorder {
         channels: u32,
         rate: u32,
         device_id: Option<&str>,
+        #[allow(unused_variables)] session_mode: session_policy::SessionMode,
     ) -> Result<Box<dyn PcmSource>, String> {
         // A denied grant does not make AudioQueue fail; it records silence.
         if permission::status() == PERMISSION_DENIED {
@@ -140,7 +143,7 @@ impl Recorder {
         }
         // iOS gates audio input behind an active AVAudioSession; macOS does not.
         #[cfg(target_os = "ios")]
-        ios_session::activate()?;
+        session_mode.activate_if_automatic(ios_session::activate)?;
         // device_id selects a specific input on macOS (the AudioQueue's current
         // device, by UID); iOS routes through AVAudioSession, so it is ignored.
         let cap = coreaudio::CoreAudioCapture::open(&self.coreaudio, channels, rate, device_id)?;
@@ -201,8 +204,20 @@ impl Recorder {
         Err("native capture is not implemented on this platform yet".into())
     }
 
-    fn start(&self, rate: u32, channels: u32, device_id: Option<&str>) -> Result<u64, String> {
-        let source = self.open_source(channels, rate, device_id)?;
+    fn start(
+        &self,
+        rate: u32,
+        channels: u32,
+        device_id: Option<&str>,
+        session_mode: session_policy::SessionMode,
+    ) -> Result<u64, String> {
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        let source = self.open_source(channels, rate, device_id, session_mode)?;
+        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+        let source = {
+            let _ = session_mode;
+            self.open_source(channels, rate, device_id)?
+        };
         let actual_channels = source.channels();
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let recording = Arc::new(Recording {
@@ -228,7 +243,7 @@ impl Recorder {
 /// Returns the ABI version. Bumped when the C ABI changes.
 #[no_mangle]
 pub extern "C" fn microphone_abi_version() -> u32 {
-    2
+    3
 }
 
 /// Creates a recorder. Returns null on failure; see [microphone_last_error].
@@ -278,6 +293,33 @@ pub unsafe extern "C" fn microphone_start(
     channels: u32,
     device_id: *const c_char,
 ) -> u64 {
+    microphone_start_with_session_mode(recorder, rate, channels, device_id, 0)
+}
+
+/// Starts capture with explicit iOS session ownership: 0 = automatic (legacy
+/// behavior), 1 = application-managed (no category/activation changes).
+/// Other platforms accept either mode without changing their capture behavior.
+/// Neither mode deactivates the shared session when a recording stops.
+/// Invalid modes return 0 and set the last error before touching the recorder.
+///
+/// # Safety
+/// `recorder` must be null or a live pointer from `microphone_recorder_new`.
+/// `device_id`, if non-null, must be a valid NUL-terminated C string.
+#[no_mangle]
+pub unsafe extern "C" fn microphone_start_with_session_mode(
+    recorder: *mut Recorder,
+    rate: u32,
+    channels: u32,
+    device_id: *const c_char,
+    session_mode: c_int,
+) -> u64 {
+    let mode = match session_policy::SessionMode::try_from(session_mode) {
+        Ok(mode) => mode,
+        Err(error) => {
+            set_last_error(error);
+            return 0;
+        }
+    };
     let Some(recorder) = with_recorder(recorder) else {
         return 0;
     };
@@ -293,7 +335,7 @@ pub unsafe extern "C" fn microphone_start(
             }
         }
     };
-    match recorder.start(rate, channels, device) {
+    match recorder.start(rate, channels, device, mode) {
         Ok(id) => id,
         Err(e) => {
             set_last_error(e);

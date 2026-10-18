@@ -22,11 +22,33 @@ CaptureBackend? createNativeBackend() => FfiBackend();
 typedef _RecorderNewNative = Pointer<Void> Function();
 typedef _RecorderFreeNative = Void Function(Pointer<Void>);
 typedef _RecorderFree = void Function(Pointer<Void>);
-typedef _StartNative =
-    Uint64 Function(Pointer<Void>, Uint32, Uint32, Pointer<Utf8>);
+typedef _StartNative = Uint64 Function(
+  Pointer<Void>,
+  Uint32,
+  Uint32,
+  Pointer<Utf8>,
+);
 typedef _Start = int Function(Pointer<Void>, int, int, Pointer<Utf8>);
-typedef _ReadNative =
-    IntPtr Function(Pointer<Void>, Uint64, Pointer<Int16>, Size);
+typedef _StartWithSessionNative = Uint64 Function(
+  Pointer<Void>,
+  Uint32,
+  Uint32,
+  Pointer<Utf8>,
+  Int32,
+);
+typedef _StartWithSession = int Function(
+  Pointer<Void>,
+  int,
+  int,
+  Pointer<Utf8>,
+  int,
+);
+typedef _ReadNative = IntPtr Function(
+  Pointer<Void>,
+  Uint64,
+  Pointer<Int16>,
+  Size,
+);
 typedef _Read = int Function(Pointer<Void>, int, Pointer<Int16>, int);
 typedef _IdQueryNative = Int32 Function(Pointer<Void>, Uint64);
 typedef _IdQuery = int Function(Pointer<Void>, int);
@@ -126,6 +148,7 @@ class _Bindings {
         'microphone_recorder_free',
       ),
       start = lib.lookupFunction<_StartNative, _Start>('microphone_start'),
+      startWithSession = _optionalSessionStart(lib),
       read = lib.lookupFunction<_ReadNative, _Read>('microphone_read'),
       sampleRate = lib.lookupFunction<_IdQueryNative, _IdQuery>(
         'microphone_sample_rate',
@@ -169,6 +192,17 @@ class _Bindings {
     }
   }
 
+  static _StartWithSession? _optionalSessionStart(DynamicLibrary lib) {
+    try {
+      return lib.lookupFunction<_StartWithSessionNative, _StartWithSession>(
+        'microphone_start_with_session_mode',
+      );
+    } on ArgumentError {
+      return null;
+    }
+  }
+
+  final _StartWithSession? startWithSession;
   final Pointer<Void> Function() recorderNew;
   final _RecorderFree recorderFree;
   final _Start start;
@@ -189,7 +223,7 @@ class _Bindings {
 }
 
 /// Captures audio by calling the native `microphone` library over FFI.
-class FfiBackend extends CaptureBackend {
+class FfiBackend extends CaptureBackend implements AudioSessionCaptureBackend {
   _Bindings? _bindings;
   Pointer<Void> _recorder = nullptr;
   // Recordings whose native ids live in _recorder.
@@ -310,14 +344,39 @@ class FfiBackend extends CaptureBackend {
     CaptureFormat format = const CaptureFormat(),
     String? deviceId,
     bool retainPcm = true,
+  }) => startRecordingWithAudioSession(
+    audioSessionManagement: AudioSessionManagement.automatic,
+    format: format,
+    deviceId: deviceId,
+    retainPcm: retainPcm,
+  );
+
+  @override
+  Future<Recording> startRecordingWithAudioSession({
+    required AudioSessionManagement audioSessionManagement,
+    CaptureFormat format = const CaptureFormat(),
+    String? deviceId,
+    bool retainPcm = true,
   }) async {
     if (_recorder == nullptr) await initialize();
+    if (audioSessionManagement == AudioSessionManagement.application &&
+        _bindings!.startWithSession == null) {
+      throw UnsupportedError(
+        'Native microphone library lacks application-managed audio sessions (ABI 3 required)',
+      );
+    }
     // Capturing without permission fails on Android and records silence on
     // Apple platforms, so ask first, as CaptureBackend promises.
     if (!await hasPermission() && !await requestPermission()) {
       throw const PermissionDeniedException();
     }
-    return FfiRecording._(this, format, deviceId, retainPcm: retainPcm);
+    return FfiRecording._(
+      this,
+      format,
+      deviceId,
+      retainPcm: retainPcm,
+      audioSessionManagement: audioSessionManagement,
+    );
   }
 
   @override
@@ -343,10 +402,19 @@ class FfiRecording implements Recording {
     CaptureFormat requested,
     String? deviceId, {
     bool retainPcm = true,
+    required AudioSessionManagement audioSessionManagement,
   }) : _retainPcm = retainPcm {
     final cId = deviceId == null ? nullptr : deviceId.toNativeUtf8();
     try {
-      _id = _b.start(_recorder, requested.sampleRate, requested.channels, cId);
+      _id = audioSessionManagement == AudioSessionManagement.automatic
+          ? _b.start(_recorder, requested.sampleRate, requested.channels, cId)
+          : _b.startWithSession!(
+              _recorder,
+              requested.sampleRate,
+              requested.channels,
+              cId,
+              1,
+            );
     } finally {
       if (cId != nullptr) malloc.free(cId);
     }

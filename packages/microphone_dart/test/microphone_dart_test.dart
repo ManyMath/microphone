@@ -42,6 +42,29 @@ class _ProbeBackend extends CaptureBackend {
   Future<void> dispose() async {}
 }
 
+class _SessionBackend extends _ProbeBackend
+    implements AudioSessionCaptureBackend {
+  _SessionBackend() : super('session');
+  AudioSessionManagement? sessionMode;
+  CaptureFormat? receivedFormat;
+  String? receivedDevice;
+  bool? receivedRetainPcm;
+
+  @override
+  Future<Recording> startRecordingWithAudioSession({
+    required AudioSessionManagement audioSessionManagement,
+    CaptureFormat format = const CaptureFormat(),
+    String? deviceId,
+    bool retainPcm = true,
+  }) async {
+    sessionMode = audioSessionManagement;
+    receivedFormat = format;
+    receivedDevice = deviceId;
+    receivedRetainPcm = retainPcm;
+    return SilentRecording(format, const Duration(milliseconds: 10));
+  }
+}
+
 void main() {
   tearDown(() => Microphone.reset());
 
@@ -97,6 +120,60 @@ void main() {
       Microphone.registerBackend(pinned, makeActive: true);
       Microphone.registerBackend(_ProbeBackend('later', priority: 9000));
       expect(Microphone.backend.name, 'pinned');
+    });
+  });
+
+  group('audio session ownership', () {
+    test(
+      'legacy backend remains compatible with automatic recording',
+      () async {
+        final backend = _ProbeBackend('legacy');
+        Microphone.registerBackend(backend, makeActive: true);
+        final recording = await Microphone.record();
+        expect(backend.initializeCalls, 1);
+        await recording.stop();
+      },
+    );
+
+    test('unsupported ownership fails before backend initialization', () async {
+      final backend = _ProbeBackend('legacy');
+      Microphone.registerBackend(backend, makeActive: true);
+      await expectLater(
+        Microphone.record(
+          audioSessionManagement: AudioSessionManagement.application,
+        ),
+        throwsUnsupportedError,
+      );
+      expect(backend.initializeCalls, 0);
+    });
+
+    test(
+      'application ownership forwards format, device and retention',
+      () async {
+        final backend = _SessionBackend();
+        Microphone.registerBackend(backend, makeActive: true);
+        const format = CaptureFormat(sampleRate: 8000, channels: 1);
+        final recording = await Microphone.record(
+          format: format,
+          deviceId: 'chosen-input',
+          retainPcm: false,
+          audioSessionManagement: AudioSessionManagement.application,
+        );
+        expect(backend.initializeCalls, 1);
+        expect(backend.sessionMode, AudioSessionManagement.application);
+        expect(backend.receivedFormat, same(format));
+        expect(backend.receivedDevice, 'chosen-input');
+        expect(backend.receivedRetainPcm, isFalse);
+        await recording.stop();
+      },
+    );
+
+    test('automatic mode retains the legacy entry point', () async {
+      final backend = _SessionBackend();
+      Microphone.registerBackend(backend, makeActive: true);
+      final recording = await Microphone.record();
+      expect(backend.sessionMode, isNull);
+      await recording.stop();
     });
   });
 

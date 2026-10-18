@@ -38,3 +38,23 @@ dart run melos run test           # Dart + Flutter tests
 dart run melos run test:web       # web backend in headless Chrome
 dart run melos run native:test    # Rust crate tests
 ```
+
+## Applications sharing playback and capture on iOS
+
+`Microphone.record()` preserves automatic session configuration by default.
+Applications coordinating playback, capture, calls, or multiple audio libraries
+can select `audioSessionManagement: AudioSessionManagement.application`. Configure
+and activate a record-capable `AVAudioSession` in the application before starting
+capture. In this mode microphone does not change category, activate, or deactivate
+the shared session. The application owns route changes, interruptions, recovery,
+and final deactivation after all playback and capture users have stopped.
+Stopping one microphone recording never deactivates the shared session.
+
+This opt-in requires native microphone ABI 3. An older native library or a custom
+backend without `AudioSessionCaptureBackend` fails with `UnsupportedError` rather
+than reverting to automatic session configuration. Other native platforms accept
+the mode without changing their capture behavior. Microphone permission remains
+required independently of session ownership. Applications using a web or simulated
+backend should retain automatic mode unless that backend implements the capability.
+Pure Dart and session-policy tests establish routing and ownership behavior;
+physical iOS playback/capture, interruptions, and route changes require device tests.
