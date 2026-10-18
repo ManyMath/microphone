@@ -150,13 +150,20 @@ unsafe fn ns_string_retained(
     Some(retain(string, sel(c"retain".as_ptr())))
 }
 
+/// The permission state TCC reports, as one of the `PERMISSION_*` codes.
+fn raw_status() -> c_int {
+    match runtime() {
+        Some(rt) => unsafe { status_with(rt) }.unwrap_or(PERMISSION_NOT_APPLICABLE),
+        None => PERMISSION_NOT_APPLICABLE,
+    }
+}
+
 /// The current permission state, as one of the `PERMISSION_*` codes.
 pub fn status() -> c_int {
-    let Some(rt) = runtime() else {
-        return PERMISSION_NOT_APPLICABLE;
-    };
-    let state = unsafe { status_with(rt) }.unwrap_or(PERMISSION_NOT_APPLICABLE);
+    let state = raw_status();
     if state != PERMISSION_UNDETERMINED {
+        // TCC has a decision; an earlier request's answer no longer applies.
+        ANSWER.store(ANSWER_PENDING, Ordering::SeqCst);
         return state;
     }
     // The system can answer a request without recording a decision (e.g. a
@@ -207,8 +214,11 @@ unsafe fn status_with(rt: &Runtime) -> Option<c_int> {
 /// returns the state as it is now (still undetermined while the prompt is
 /// showing).
 pub fn request() -> c_int {
-    let state = status();
+    // Decide from TCC alone: a recorded answer must not stop a fresh request
+    // (e.g. after `tccutil reset` while the process runs) from asking again.
+    let state = raw_status();
     if state != PERMISSION_UNDETERMINED {
+        ANSWER.store(ANSWER_PENDING, Ordering::SeqCst);
         return state;
     }
     let Some(rt) = runtime() else {
