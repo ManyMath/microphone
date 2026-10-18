@@ -76,8 +76,8 @@ public final class MicrophoneFlutterPlugin
   @Override
   public void onDetachedFromActivity() {
     detachActivity();
-    // No Activity will deliver the answer now.
-    answerPending(false);
+    // No Activity will deliver the answer now; report the state as it stands.
+    answerPending(granted());
   }
 
   private void detachActivity() {
@@ -96,16 +96,18 @@ public final class MicrophoneFlutterPlugin
       case "requestPermission":
         if (granted()) {
           result.success(true);
+        } else if (!pending.isEmpty()) {
+          // A prompt is already up (perhaps across an Activity recreation,
+          // while no Activity is attached); share its answer.
+          pending.add(result);
         } else if (activity == null) {
           // Without an Activity (e.g. a background engine) there is nothing
           // to show the prompt on.
           result.success(false);
         } else {
           pending.add(result);
-          if (pending.size() == 1) {
-            Activity host = activity.getActivity();
-            host.requestPermissions(new String[] {Manifest.permission.RECORD_AUDIO}, REQUEST_CODE);
-          }
+          Activity host = activity.getActivity();
+          host.requestPermissions(new String[] {Manifest.permission.RECORD_AUDIO}, REQUEST_CODE);
         }
         break;
       case "devices":
@@ -176,7 +178,9 @@ public final class MicrophoneFlutterPlugin
   public boolean onRequestPermissionsResult(
       int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
     if (requestCode != REQUEST_CODE) return false;
-    answerPending(grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED);
+    // grantResults is empty when the request was interrupted; the permission
+    // state itself is the reliable answer either way.
+    answerPending(granted());
     return true;
   }
 
