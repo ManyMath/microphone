@@ -2,12 +2,19 @@
 library;
 
 import 'dart:io';
+import 'dart:isolate';
 import 'package:test/test.dart';
 
 void main() {
   test(
     'optional session ABI preserves legacy loading and fails closed',
     () async {
+      final libraryUri = await Isolate.resolvePackageUri(
+        Uri.parse('package:microphone_dart/microphone_dart.dart'),
+      );
+      if (libraryUri == null)
+        throw StateError('Cannot locate microphone package');
+      final packageRoot = File.fromUri(libraryUri).parent.parent;
       final temp = Directory.systemTemp.createTempSync(
         'microphone-session-abi-',
       );
@@ -19,7 +26,7 @@ void main() {
           Platform.isMacOS ? '-dynamiclib' : '-shared',
           '-fPIC',
           if (current) '-DSESSION_ABI',
-          'test/fixtures/session_abi.c',
+          '${packageRoot.path}/test/fixtures/session_abi.c',
           '-o',
           library,
         ]);
@@ -31,7 +38,7 @@ void main() {
         for (final mode in ['automatic', 'application']) {
           final probe = await Process.run(Platform.resolvedExecutable, [
             'run',
-            'test/fixtures/session_abi_probe.dart',
+            '${packageRoot.path}/test/fixtures/session_abi_probe.dart',
             library,
             mode,
           ]);

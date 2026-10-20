@@ -4,7 +4,7 @@ description: >-
   dependencies.  Integrates the `microphone_dart` package and uses cargokit 
   to build the native Rust audio library and use it via FFI.
 version: 0.0.2
-repository: https://github.com/ManyMath/microphone
+repository: https://github.com/ManyMath/microphone/tree/main/packages/microphone_flutter
 issue_tracker: https://github.com/ManyMath/microphone/issues
 topics:
   - audio

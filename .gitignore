@@ -33,3 +33,7 @@ target/
 *.swp
 .idea/
 .vscode/
+
+# Python verification tooling
+__pycache__/
+*.pyc

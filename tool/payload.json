@@ -1,0 +1,48 @@
+{
+  "dart_sdk": "3.13.2",
+  "packages": [
+    {
+      "name": "microphone_dart",
+      "path": "packages/microphone_dart",
+      "required": [
+        "LICENSE",
+        "lib/microphone_dart.dart"
+      ]
+    },
+    {
+      "name": "microphone_flutter",
+      "path": "packages/microphone_flutter",
+      "required": [
+        "rust/Cargo.toml",
+        "rust/src/lib.rs",
+        "cargokit/cmake/cargokit.cmake"
+      ],
+      "contracts": {
+        "linux/CMakeLists.txt": "apply_cargokit(${PROJECT_NAME} ../rust microphone",
+        "windows/CMakeLists.txt": "apply_cargokit(${PROJECT_NAME} ../rust microphone",
+        "android/build.gradle": "manifestDir = \"../rust\"",
+        "ios/microphone_flutter.podspec": "build_pod.sh\" ../rust microphone",
+        "macos/microphone_flutter.podspec": "build_pod.sh\" ../rust microphone"
+      }
+    }
+  ],
+  "flutter_package": "microphone_flutter",
+  "dart_package": "microphone_dart",
+  "hosted_dart_constraint": "^0.0.1",
+  "library_name": "libmicrophone.so",
+  "library_environment": "MICROPHONE_LIB",
+  "flutter_main": "import 'package:flutter/material.dart';\nimport 'package:microphone_flutter/microphone_flutter.dart';\nFuture<void> main() async { WidgetsFlutterBinding.ensureInitialized(); final backend = await MicrophoneFlutter.ensureInitialized(); runApp(MaterialApp(home: Text(backend))); }\n",
+  "dart_main": "import 'dart:io';\nimport 'package:microphone_dart/microphone_dart.dart';\nFuture<void> main() async {\n  final backend = Microphone.backend;\n  if (backend.name != 'ffi') throw StateError('native backend did not load');\n  await backend.initialize();\n  final expected = File(Platform.environment['MICROPHONE_LIB']!).resolveSymbolicLinksSync();\n  final mappings = File('/proc/self/maps').readAsLinesSync().where((line) => line.contains('libmicrophone.so')).toList();\n  if (mappings.isEmpty || mappings.any((line) => !line.endsWith(' $expected'))) throw StateError('unexpected native mapping: $mappings');\n  if (!await backend.hasPermission()) throw StateError('Linux permission unexpectedly denied');\n  await Microphone.reset();\n  print('Exact native library loaded; recorder initialization, permission query and disposal passed without capture');\n}\n",
+  "rust_toolchain": "stable",
+  "rust_targets": {
+    "linux": [
+      "x86_64-unknown-linux-gnu"
+    ],
+    "macos": [
+      "{host_arch}-apple-darwin"
+    ],
+    "windows": [
+      "{host_arch}-pc-windows-msvc"
+    ]
+  }
+}

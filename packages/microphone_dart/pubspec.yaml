@@ -4,7 +4,7 @@ description: >-
   system dependencies.  Dart (no Flutter dependency) with native audio from 
   Rust via FFI.
 version: 0.0.2
-repository: https://github.com/ManyMath/microphone
+repository: https://github.com/ManyMath/microphone/tree/main/packages/microphone_dart
 issue_tracker: https://github.com/ManyMath/microphone/issues
 topics:
   - audio
