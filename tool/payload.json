@@ -15,7 +15,8 @@
       "required": [
         "rust/Cargo.toml",
         "rust/src/lib.rs",
-        "cargokit/cmake/cargokit.cmake"
+        "cargokit/cmake/cargokit.cmake",
+        "cargokit/VENDOR_PROVENANCE.json"
       ],
       "contracts": {
         "linux/CMakeLists.txt": "apply_cargokit(${PROJECT_NAME} ../rust microphone",
@@ -23,7 +24,10 @@
         "android/build.gradle": "manifestDir = \"../rust\"",
         "ios/microphone_flutter.podspec": "build_pod.sh\" ../rust microphone",
         "macos/microphone_flutter.podspec": "build_pod.sh\" ../rust microphone"
-      }
+      },
+      "provenance": [
+        "cargokit/VENDOR_PROVENANCE.json"
+      ]
     }
   ],
   "flutter_package": "microphone_flutter",

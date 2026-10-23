@@ -2,4 +2,4 @@
 .pub/
 build/
 rust/target/
-example/
+/example/
