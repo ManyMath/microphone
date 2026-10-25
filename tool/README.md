@@ -18,6 +18,15 @@ Provision Dart3.13.2, Flutter, Python3.12+, and Rust stable plus required target
 The helper records the exact SDK/compiler and source revision. Mac/Windows debug
 builds preflight the host architecture; Linux also loads the exact bundled library,
 initializes and disposes a recorder, and queries permission without recording.
+Windows does the same with the bundled `runner/Debug/microphone.dll`: the process
+module list must contain exactly that file, a same-named DLL on PATH is refused,
+and the ABI version and null-handle contracts are checked. It neither enumerates
+nor opens an input device. The evidence records the library path and SHA256, and
+`hosted_dart_smoke.py` accepts that Windows candidate. The gate sets
+RUSTUP_WINDOWS_PATH_ADD_BIN=1 for its children only: rustup proxies installed as
+symlinks cannot be started by processes that enforce redirection trust (os error
+448). `.gitattributes` keeps the hash-pinned Cargokit bytes LF under
+core.autocrlf; other text files in such a checkout are archived with CRLF.
 Physical microphone capture, Apple interruptions/routes, and simultaneous playback
 remain separate acceptance tests. A passing source build is not hardware evidence.
 
