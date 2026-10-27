@@ -32,7 +32,7 @@
   ],
   "flutter_package": "microphone_flutter",
   "dart_package": "microphone_dart",
-  "hosted_dart_constraint": "^0.0.1",
+  "hosted_dart_constraint": "^0.0.2",
   "library_name": "libmicrophone.so",
   "library_environment": "MICROPHONE_LIB",
   "flutter_main": "import 'package:flutter/material.dart';\nimport 'package:microphone_flutter/microphone_flutter.dart';\nFuture<void> main() async { WidgetsFlutterBinding.ensureInitialized(); final backend = await MicrophoneFlutter.ensureInitialized(); runApp(MaterialApp(home: Text(backend))); }\n",

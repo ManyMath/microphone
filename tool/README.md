@@ -34,3 +34,7 @@ Private Gitea CI runs Dart/Flutter/Rust tests and candidate/hosted consumers.
 Keep per-job Cargo caches isolated from developer tools. Do not install or remove
 shared SDKs from CI. The workspace lockfile tracks the provisioned Flutter SDK;
 it is not shipped as a consumer dependency constraint.
+
+The full hosted-wrapper gate requires microphone_dart ^0.0.2, matching the wrapper
+manifest; it must fail until that candidate is published by the owner. The separate
+`hosted_dart_smoke.py` deliberately tests legacy 0.0.1 native ABI compatibility.
